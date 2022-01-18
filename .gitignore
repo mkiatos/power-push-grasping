@@ -1,0 +1,19 @@
+# Python:
+__pycache__
+*.egg-info
+
+# IDEs
+*.idea*
+
+# venv
+venv/
+
+# pkl files
+*.pkl
+
+*.urdf
+
+models/
+assets/
+logs/
+
