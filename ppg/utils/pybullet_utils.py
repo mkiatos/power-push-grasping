@@ -7,7 +7,7 @@ PyBullet Utilities
 import pybullet as p
 import numpy as np
 
-from gog.utils.orientation import Quaternion
+from ppg.utils.orientation import Quaternion
 
 
 def get_joint_indices(names, body_unique_id=0):

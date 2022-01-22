@@ -3,7 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 
-from gog.utils import pybullet_utils
+from ppg.utils import pybullet_utils
 
 
 def get_pointcloud(depth, intrinsics):

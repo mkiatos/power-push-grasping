@@ -351,9 +351,6 @@ class FloatingBHand(FloatingGripper):
     def open(self, joint_vals=[0.0, 0.6, 0.6, 0.6]):
         self.move_fingers(joint_vals, duration=.1)
 
-    def set_width(self):
-        pass
-
     def configure(self, n_links_before):
         # Set friction coefficients for gripper fingers
         for i in range(n_links_before, p.getNumJoints(self.robot_hand_id)):
