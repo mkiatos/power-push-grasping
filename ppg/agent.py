@@ -7,19 +7,59 @@ import torch
 
 from ppg.utils import orientation as ori
 from ppg.utils.utils import min_max_scale
-from ppg.models import ResFCN, Classifier
+from ppg.models import ResFCN, Classifier, Regressor
 
 
 class PushGrasping:
-    def __init__(self,
-                 robot_hand):
-        self.robot_hand = robot_hand
+    def __init__(self, params):
+        self.params = params
 
-        self.init_distance = 0.15
-        self.rotations = 16
-        self.widths = np.array([0.6, 0.7, 0.8, 0.9, 1.0, 1.1])
+        self.rotations = params['rotations']
+        self.aperture_limits = params['aperture_limits']
+        self.aperture_limits = [0.6, 0.8, 1.1]
+        self.crop_size = 32
 
-        self.model = ResFCN().to('cuda')
+        self.fcn = ResFCN().to('cuda')
+        self.classifier = Classifier(n_classes=3).to('cuda')
+
+    def pre_process(self, heightmap):
+        diag_length = float(heightmap.shape[0]) * np.sqrt(2)
+        diag_length = np.ceil(diag_length / 16) * 16
+        self.padding_width = int((diag_length - heightmap.shape[0]) / 2)
+        padded_heightmap = np.pad(heightmap, self.padding_width, 'constant', constant_values=-0.01)
+
+        # Normalize maps ( ToDo: find mean and std)
+        image_mean = 0.01
+        image_std = 0.03
+        padded_heightmap = (padded_heightmap - image_mean) / image_std
+
+        # Add extra channel
+        padded_heightmap = np.expand_dims(padded_heightmap, axis=0)
+        return padded_heightmap
+
+    def post_process(self, q_maps):
+        """
+        Remove extra padding
+
+        Params:
+            shape: the output shape of preprocess
+
+        Returns rotations x openings x w x h
+        """
+
+        w = int(q_maps.shape[2] - 2 * self.padding_width)
+        h = int(q_maps.shape[3] - 2 * self.padding_width)
+        remove_pad = np.zeros((q_maps.shape[0], q_maps.shape[1], w, h))
+
+        for i in range(q_maps.shape[0]):
+            for j in range(q_maps.shape[1]):
+                # remove extra padding
+                q_map = q_maps[i, j, self.padding_width:int(q_maps.shape[2] - self.padding_width),
+                        self.padding_width:int(q_maps.shape[3] - self.padding_width)]
+
+                remove_pad[i][j] = q_map.detach().cpu().numpy()
+
+        return remove_pad
 
     def seed(self, seed):
         random.seed(seed)
@@ -98,30 +138,111 @@ class PushGrasping:
         #
         return [pxl[1], pxl[0], discrete_theta, 0.6]
 
-    def terminal(self, obs, next_obs):
-        objects = next_obs['full_state']
+    def pre_process_aperture_img(self, heightmap, p1, theta, plot=True):
+        # Add extra padding (to handle rotations inside network)
+        diag_length = float(heightmap.shape[0]) * np.sqrt(2)
+        diag_length = np.ceil(diag_length / 16) * 16
+        padding_width = int((diag_length - heightmap.shape[0]) / 2)
+        depth_heightmap = np.pad(heightmap, padding_width, 'constant')
+        padded_shape = depth_heightmap.shape
 
-        is_terminal = True
-        for obj in objects:
-            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
-            if obj_pos[2] < 0:
-                continue
+        p1 += padding_width
+        action_theta = -(theta + (2 * np.pi))
+        # Rotate image (push always on the right)
+        rot = cv2.getRotationMatrix2D((int(padded_shape[0] / 2), int(padded_shape[1] / 2)),
+                                      action_theta * 180 / np.pi, 1.0)
+        rotated_heightmap = cv2.warpAffine(depth_heightmap, rot, (padded_shape[0], padded_shape[1]))
 
-            # Check if there is at least one object in the scene with the axis parallel to world z.
-            rot_mat = ori.Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
-            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
-            if np.abs(angle_z) < 0.1:
-                is_terminal = False
+        # Compute the position of p1 on rotated heightmap
+        rotated_pt = np.dot(rot, (p1[0], p1[1], 1.0))
+        rotated_pt = (int(rotated_pt[0]), int(rotated_pt[1]))
 
-        return is_terminal
+        # Crop heightmap
+        cropped_map = np.zeros((2 * self.crop_size, 2 * self.crop_size), dtype=np.float32)
+        y_start = max(0, rotated_pt[1] - self.crop_size)
+        y_end = min(padded_shape[0], rotated_pt[1] + self.crop_size)
+        x_start = rotated_pt[0]
+        x_end = min(padded_shape[0], rotated_pt[0] + 2 * self.crop_size)
+        cropped_map[0:y_end - y_start, 0:x_end - x_start] = rotated_heightmap[y_start: y_end, x_start: x_end]
+
+        # print( action['opening']['min_width'])
+        if plot:
+            p2 = np.array([0, 0])
+            p2[0] = p1[0] + 20 * np.cos(theta)
+            p2[1] = p1[1] - 20 * np.sin(theta)
+
+            fig, ax = plt.subplots(1, 3)
+            ax[0].imshow(depth_heightmap)
+            ax[0].plot(p1[0], p1[1], 'o', 2)
+            ax[0].plot(p2[0], p2[1], 'x', 2)
+            ax[0].arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
+
+            rotated_p2 = np.array([0, 0])
+            rotated_p2[0] = rotated_pt[0] + 20 * np.cos(0)
+            rotated_p2[1] = rotated_pt[1] - 20 * np.sin(0)
+            ax[1].imshow(rotated_heightmap)
+            ax[1].plot(rotated_pt[0], rotated_pt[1], 'o', 2)
+            ax[1].plot(rotated_p2[0], rotated_p2[1], 'x', 2)
+            ax[1].arrow(rotated_pt[0], rotated_pt[1], rotated_p2[0] - rotated_pt[0], rotated_p2[1] - rotated_pt[1],
+                        width=1)
+
+            ax[2].imshow(cropped_map)
+            plt.show()
+
+        # Normalize maps ( ToDo: find mean and std) # Todo
+        image_mean = 0.01
+        image_std = 0.03
+        cropped_map = (cropped_map - image_mean) / image_std
+        cropped_map = np.expand_dims(cropped_map, axis=0)
+
+        p1 -= padding_width
+        return cropped_map
+
+    def predict(self, heightmap):
+        input_heightmap = self.pre_process(heightmap)
+
+        # Find optimal position and orientation
+        x = torch.FloatTensor(input_heightmap).unsqueeze(0).to('cuda')
+        out_prob = self.fcn(x, is_volatile=True)
+        out_prob = self.post_process(out_prob)
+
+        best_action = np.unravel_index(np.argmax(out_prob), out_prob.shape)
+
+        p1 = np.array([best_action[3], best_action[2]])
+
+        theta = best_action[0] * 2 * np.pi / self.rotations
+
+        p2 = np.array([0, 0])
+        p2[0] = p1[0] + 20 * np.cos(theta)
+        p2[1] = p1[1] - 20 * np.sin(theta)
+
+        plt.imshow(heightmap)
+        plt.plot(p1[0], p1[1], 'o', 2)
+        plt.plot(p2[0], p2[1], 'x', 2)
+        plt.arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
+        plt.show()
+
+        # Find optimal aperture
+        aperture_img = self.pre_process_aperture_img(heightmap, p1, theta)
+        x = torch.FloatTensor(aperture_img).unsqueeze(0).to('cuda')
+        pred = self.classifier(x)
+        max_id = torch.argmax(pred).detach().cpu().numpy()
+
+        return p1[0], p1[1], theta, self.aperture_limits[max_id]
 
     def action(self, action, bounds, pxl_size):
+        print(action)
         x = -(pxl_size * action[0] - bounds[0][1])
         y = pxl_size * action[1] - bounds[1][1]
+        print(x, y)
 
         quat = ori.Quaternion.from_rotation_matrix(np.matmul(ori.rot_y(-np.pi / 2), ori.rot_x(action[2])))
 
         return {'pos': np.array([x, y, 0.1]), 'quat': quat, 'width': action[3]}
+
+    def load(self, weights_fcn, weights_cls):
+        self.fcn.load_state_dict(torch.load(weights_fcn))
+        self.classifier.load_state_dict(torch.load(weights_cls))
 
     def init_state_is_valid(self, obs):
         flat_objs = 0
@@ -141,100 +262,20 @@ class PushGrasping:
         else:
             return True
 
-    def load(self, model_weights):
-        checkpoint_model = torch.load(model_weights)
-        self.model.load_state_dict(checkpoint_model)
+    def terminal(self, obs, next_obs):
+        objects = next_obs['full_state']
 
-    def post_process(self, q_maps):
-        """
-        Remove extra padding
+        is_terminal = True
+        for obj in objects:
+            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
+            if obj_pos[2] < 0:
+                continue
 
-        Params:
-            shape: the output shape of preprocess
+            # Check if there is at least one object in the scene with the axis parallel to world z.
+            rot_mat = ori.Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
+            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
+            if np.abs(angle_z) < 0.1:
+                is_terminal = False
 
-        Returns rotations x openings x w x h
-        """
-
-        w = int(q_maps.shape[2] - 2 * self.padding_width)
-        h = int(q_maps.shape[3] - 2 * self.padding_width)
-        remove_pad = np.zeros((q_maps.shape[0], q_maps.shape[1], w, h))
-
-        for i in range(q_maps.shape[0]):
-            for j in range(q_maps.shape[1]):
-                # remove extra padding
-                q_map = q_maps[i, j, self.padding_width:int(q_maps.shape[2] - self.padding_width),
-                        self.padding_width:int(q_maps.shape[3] - self.padding_width)]
-
-                remove_pad[i][j] = q_map.detach().cpu().numpy()
-
-        return remove_pad
-
-    def predict(self, heightmap):
-        diag_length = float(heightmap.shape[0]) * np.sqrt(2)
-        diag_length = np.ceil(diag_length / 16) * 16
-        self.padding_width = int((diag_length - heightmap.shape[0]) / 2)
-        depth_heightmap = np.pad(heightmap, self.padding_width, 'constant', constant_values=-0.01)
-        padded_shape = (depth_heightmap.shape[0], depth_heightmap.shape[1])
-
-        # Normalize maps ( ToDo: find mean and std) # Todo
-        image_mean = 0.01
-        image_std = 0.03
-        depth_heightmap = (depth_heightmap - image_mean) / image_std
-
-        # Add extra channel
-        depth_heightmap = np.expand_dims(depth_heightmap, axis=0)
-
-        x = torch.FloatTensor(depth_heightmap).unsqueeze(0).to('cuda')
-        out_prob = self.model(x, is_volatile=True)
-        out_prob = self.post_process(out_prob)
-
-        glob_max_prob = np.max(out_prob)
-        for j in range(6):
-            fig, ax = plt.subplots(4, 4)
-            for i in range(16):
-                x = int(i / 4)
-                y = i % 4
-
-                min_prob = np.min(out_prob[i][j])
-                max_prob = np.max(out_prob[i][j])
-
-                prediction_vis = min_max_scale(out_prob[i][j],
-                                               range=(min_prob, max_prob),
-                                               target_range=(0, 1))
-                best_pt = np.unravel_index(prediction_vis.argmax(), prediction_vis.shape)
-                maximum_prob = np.max(out_prob[i][j])
-
-                prediction_vis = cv2.applyColorMap((prediction_vis * 255).astype(np.uint8), cv2.COLORMAP_JET)
-                prediction_vis = cv2.cvtColor(prediction_vis, cv2.COLOR_BGR2RGB)
-                prediction_vis = (0.5 * cv2.cvtColor(heightmap, cv2.COLOR_RGB2BGR) + 0.5 * prediction_vis).astype(
-                    np.uint8)
-                ax[x, y].imshow(prediction_vis)
-                ax[x, y].set_title(str(i) + ', ' + str(format(maximum_prob, ".3f")))
-
-                if glob_max_prob == max_prob:
-                    ax[x, y].plot(best_pt[1], best_pt[0], 'rx')
-                else:
-                    ax[x, y].plot(best_pt[1], best_pt[0], 'ro')
-                dx = 20 * np.cos((i / 16) * 2 * np.pi)
-                dy = -20 * np.sin((i / 16) * 2 * np.pi)
-                ax[x, y].arrow(best_pt[1], best_pt[0], dx, dy, width=2, color='g')
-            plt.show()
-
-        best_action = np.unravel_index(np.argmax(out_prob), out_prob.shape)
-
-        p1 = np.array([best_action[2], best_action[3]])
-        theta = best_action[0] * 2 * np.pi / self.rotations
-
-        p2 = np.array([0, 0])
-        p2[0] = p1[0] + 20 * np.cos(theta)
-        p2[1] = p1[1] - 20 * np.sin(theta)
-
-        plt.imshow(heightmap)
-        plt.plot(p1[0], p1[1], 'o', 2)
-        plt.plot(p2[0], p2[1], 'x', 2)
-        plt.arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
-        plt.show()
-
-        return p1[0], p1[1], theta, self.widths[best_action[1]]
-
+        return is_terminal
 
