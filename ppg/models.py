@@ -96,13 +96,7 @@ class ResFCN(nn.Module):
 
     def forward(self, depth_heightmap, specific_rotation=-1, is_volatile=[]):
         if is_volatile:
-
             # rotations x channel x h x w
-            out_prob = torch.zeros((self.nr_rotations,
-                                    1,
-                                    int(depth_heightmap.shape[2]),
-                                    int(depth_heightmap.shape[3])))
-
             batch_rot_depth = torch.zeros((self.nr_rotations,
                                            1,
                                            depth_heightmap.shape[3],
@@ -149,6 +143,13 @@ class ResFCN(nn.Module):
             flow_grid_after = F.affine_grid(Variable(affine_after, requires_grad=False).to(self.device),
                                             prob.size(), align_corners=True)
             out_prob = F.grid_sample(prob, flow_grid_after, mode='nearest', align_corners=True)
+
+            # # Image-wide softmax
+            # output_shape = out_prob.shape
+            # out_prob = out_prob.view(output_shape[0], -1)
+            # out_prob = torch.softmax(out_prob, dim=1)
+            # out_prob = out_prob.view(output_shape).to(dtype=torch.float)
+
             return out_prob
 
         else:
@@ -190,10 +191,11 @@ class ResFCN(nn.Module):
             # Forward pass through branches, undo rotation on output predictions, upsample results
             out_prob = F.grid_sample(prob, flow_grid_after, mode='nearest', align_corners=True)
 
-            output_shape = out_prob.shape
-            out_prob = out_prob.view(output_shape[0], -1)
-            out_prob = torch.softmax(out_prob, dim=1)
-            out_prob = out_prob.view(output_shape).to(dtype=torch.float)
+            # # Image-wide softmax
+            # output_shape = out_prob.shape
+            # out_prob = out_prob.view(output_shape[0], -1)
+            # out_prob = torch.softmax(out_prob, dim=1)
+            # out_prob = out_prob.view(output_shape).to(dtype=torch.float)
 
             return out_prob
 
@@ -219,4 +221,20 @@ class Classifier(nn.Module):
         # x = torch.softmax(x, dim=1)
         return x
 
+
+class Regressor(nn.Module):
+    def __init__(self):
+        super(Classifier, self).__init__()
+        self.conv1 = nn.Conv2d(1, 16, kernel_size=4, stride=2, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False)
+        self.fc1 = nn.Linear(4096, 128)
+        self.fc2 = nn.Linear(128, 1)
+
+    def forward(self, x):
+        x = nn.functional.relu(self.conv1(x))
+        x = nn.functional.relu(self.conv2(x))
+        x = x.view(x.shape[0], -1)
+        x = nn.functional.relu(self.fc1(x))
+        x = self.fc2(x)
+        return x
 
