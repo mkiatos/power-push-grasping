@@ -18,5 +18,10 @@ pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f ht
 ## Dataset
 To generate the dataset needed for training the models.
 ```shell
-python scripts/gather_dataset.py --n_samples 500
+python scripts/gather_dataset.py --n_samples 500 --out_dir '../logs/dataset'
+```
+
+## Training FCN model 
+```shell
+python 
 ```
