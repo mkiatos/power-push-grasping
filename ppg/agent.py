@@ -4,10 +4,21 @@ import matplotlib.pyplot as plt
 import cv2
 import random
 import torch
+from sklearn.cluster import DBSCAN
+from sklearn.linear_model import LinearRegression
 
 from ppg.utils import orientation as ori
 from ppg.utils.utils import min_max_scale
 from ppg.models import ResFCN, Classifier, Regressor
+
+
+def compute_aperture(opening_in_cm):
+    # 0.6 rad -> 0.2 m, 1.1 rad -> 0.09 m, 1.5 rad -> 0.01 m
+    y = np.array([[0.6], [0.7], [0.8], [0.9], [1.0], [1.1], [1.2], [1.3], [1.4], [1.5]])
+    x = np.array([[0.2], [0.179], [0.157], [0.135], [0.112], [0.09], [0.069], [0.048], [0.029], [0.01]])
+    reg = LinearRegression().fit(x, y)
+    data = np.array([opening_in_cm])
+    return reg.predict(data.reshape(1, -1))
 
 
 class PushGrasping:
@@ -278,4 +289,97 @@ class PushGrasping:
                 is_terminal = False
 
         return is_terminal
+
+
+class HeuristicPushGrasping(PushGrasping):
+    def __init__(self, params):
+        super(HeuristicPushGrasping, self).__init__(params)
+        self.params = params
+        self.robot = []
+
+    def seed(self, seed):
+        random.seed(seed)
+
+    def clustering(self, heigtmap, plot=False):
+
+        ids = np.argwhere(heigtmap > 0)
+        db = DBSCAN(eps=2, min_samples=10).fit(ids)
+
+        seg = np.zeros(heigtmap.shape)
+        for i in range(len(ids)):
+            seg[ids[i, 0], ids[i, 1]] = db.labels_[i] + 1
+
+        if plot:
+            fig, ax = plt.subplots(1, 2)
+            ax[0].imshow(heigtmap)
+            ax[1].imshow(seg)
+            plt.show()
+
+        return seg
+
+    def predict(self, heightmap):
+        seg = self.clustering(heightmap)
+
+        obj_ids = np.unique(seg)
+        # Find the smallest cluster
+        len_clusters = np.zeros(len(obj_ids),)
+        for i in range(len(obj_ids)):
+            len_clusters[i] = len(np.argwhere(seg == obj_ids[i]))
+        target_ids = np.argwhere(seg == np.argmin(len_clusters))
+
+        # Compute opening
+        y_min = np.min(target_ids[:, 0])
+        y_max = np.max(target_ids[:, 0])
+        x_min = np.min(target_ids[:, 1])
+        x_max = np.max(target_ids[:, 1])
+        largest_side = max(y_max - y_min, x_max - x_min)
+        aperture = compute_aperture(largest_side * 0.005) - 0.05
+        print(largest_side * 0.005, aperture)
+
+        valid_pxl_map = np.zeros(heightmap.shape)
+        for x in range(heightmap.shape[0]):
+            for y in range(heightmap.shape[1]):
+                dists = np.linalg.norm(np.array([y, x]) - target_ids, axis=1)
+                if np.min(dists) > 30 or np.min(dists) < 10:  # Todo fix the hardcoded values
+                    continue
+                valid_pxl_map[y, x] = 255
+
+        # Remove pxls that belongs to other objects
+        obstacle_maps = np.ones(heightmap.shape)
+        obstacle_maps[heightmap > 0] = 0.0
+        valid_pxl_map *= obstacle_maps
+
+        # Pick a collision free path
+
+        # Compute init position
+        valid_pxls = np.argwhere(valid_pxl_map == 255)
+        valid_ids = np.arange(0, valid_pxls.shape[0])
+        pxl = valid_pxls[random.choice(valid_ids)]
+
+        target_centroid = np.mean(target_ids, axis=0)
+
+        # Compute direction
+        p1 = np.array([pxl[1], pxl[0]])
+        p2 = np.array([target_centroid[1], target_centroid[0]])
+        push_dir = p2 - p1
+        theta = -np.arctan2(push_dir[1], push_dir[0])
+
+        # Compute distance
+        self.dist = np.linalg.norm(push_dir) * 0.005
+        print(self.dist)
+
+        target_mask = np.zeros(heightmap.shape)
+        target_mask[seg == np.argmin(len_clusters)] = 122
+        # plt.imshow(valid_pxl_map + target_mask)
+        # plt.plot(pxl[1], pxl[0], 'o')
+        # plt.arrow(p1[0], p1[1], p2[0]-p1[0], p2[1]-p1[1], width=1)
+        # plt.show()
+
+        return [pxl[1], pxl[0], theta, aperture]
+
+    def action(self, action, bounds, pxl_size):
+        env_action = super(HeuristicPushGrasping, self).action(action, bounds, pxl_size)
+        env_action['push_distance'] = self.dist
+        return env_action
+
 
