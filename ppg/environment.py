@@ -3,10 +3,13 @@ import numpy as np
 import os
 import math
 import time
+import cv2
+import matplotlib.pyplot as plt
 
-from ppg.utils.orientation import Quaternion, Affine3, angle_axis2rot, rot_y
+from ppg.utils.orientation import Quaternion, Affine3, angle_axis2rot, rot_y, rot_z
 from ppg.utils import robotics, pybullet_utils, urdf_editor
 from ppg import cameras
+import ppg.utils.utils as utils
 
 UR5_URDF_PATH = 'ur5e_bhand.urdf'
 UR5_WORKSPACE_URDF_PATH = 'table/table.urdf'
@@ -272,7 +275,18 @@ class FloatingBHand(FloatingGripper):
         self.distal_indices = pybullet_utils.get_link_indices(self.distals, body_unique_id=self.robot_hand_id)
 
         # Move fingers to home position.
-        self.move_fingers([0.0, 0.6, 0.6, 0.6])
+        init_aperture_value = 0.6
+        self.move_fingers([0.0, init_aperture_value, init_aperture_value, init_aperture_value])
+
+        # pose_13 = pybullet_utils.get_link_pose('bh_finger_1_tip_link')
+        # pose_23 = pybullet_utils.get_link_pose('bh_finger_2_tip_link')
+        # pose_33 = pybullet_utils.get_link_pose('bh_finger_3_tip_link')
+        # p1 = (np.array(pose_13[0]) + np.array(pose_23[0])) / 2.0
+        # p2 = np.array(pose_33[0])
+        # print(p1, p2)
+        # dist = np.linalg.norm(p1 - p2)
+        # print(dist)
+        # input('')
 
         self.configure(n_links_before=4)
 
@@ -318,6 +332,7 @@ class FloatingBHand(FloatingGripper):
             for i in range(len(self.joint_names)):
                 command.append(trajectories[i].pos(t))
             self.set_hand_joint_position(command, force)
+            # self.step_constraints()
 
             # Keep the hand the same pose.
             p.setJointMotorControlArray(
@@ -378,8 +393,8 @@ class FloatingBHand(FloatingGripper):
                 body_b.append(pnt[2])
             total_contacts += len(contacts)
 
-        print('grasped objects:', len(np.unique(body_b)))
-        print('distals/total: {}/{}'.format(distal_contacts, total_contacts))
+        # print('grasped objects:', len(np.unique(body_b)))
+        # print('distals/total: {}/{}'.format(distal_contacts, total_contacts))
 
         if distal_contacts == total_contacts or len(np.unique(body_b)) != 1:
             return False, 0
@@ -589,7 +604,6 @@ class Environment:
         #                             base_position, base_orientation.as_vector("xyzw"))
         # p.changeDynamics(body_id, -1, lateralFriction=1.0, spinningFriction=1.0,
         #                  rollingFriction=0.0001, frictionAnchor=True)
-
         for i in range(1000):
             p.stepSimulation()
 
@@ -710,7 +724,7 @@ class Environment:
         p.setGravity(0, 0, -9.8)
 
         # Temporarily disable rendering to load scene faster.
-        # p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
 
         # Load UR5 robot arm equipped with Barrett hand.
         # robot_id = pybullet_utils.load_urdf(p, UR5_URDF_PATH, flags=p.URDF_USE_SELF_COLLISION)
@@ -724,7 +738,7 @@ class Environment:
         p.changeDynamics(table_id, -1, lateralFriction=0.1)
 
         # Re-enable rendering.
-        # p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
 
         # Generate a scene with randomly placed.
         # self.scene_generator.reset(self)
@@ -742,52 +756,39 @@ class Environment:
             time.sleep(0.001)
             p.stepSimulation()
 
-        self.remove_flats()
-
         return self.get_obs()
 
     def step(self, action):
-
-        # pybullet_utils.draw_pose(action['pos'], action['quat'])
-
-        # Pre-grasp position
+        # Move to pre-grasp position.
         pre_grasp_pos = action['pos'].copy()
         pre_grasp_pos[2] += 0.3
         self.bhand.move(pre_grasp_pos, action['quat'], duration=0.1)
 
-        # Set finger configuration
-        theta = action['width']
+        # Set finger configuration.
+        theta = action['aperture']
         self.bhand.move_fingers([0.0, theta, theta, theta], duration=.1, force=5)
 
         is_in_contact = self.bhand.move(action['pos'], action['quat'], duration=.5, stop_at_contact=True)
 
         if not is_in_contact:
-            # Push forward
+            # Push the hand forward.
             rot = action['quat'].rotation_matrix()
-            grasp_pos = action['pos'] + rot[0:3, 2] * 0.1
+            grasp_pos = action['pos'] + rot[0:3, 2] * action['push_distance']
             self.bhand.move(grasp_pos, action['quat'], duration=2)
 
-            # Close the fingers
+            # Close the fingers.
             self.bhand.close()
         else:
             grasp_pos = action['pos']
 
-        # obs = self.get_obs()
-        # obs['seg'][1][obs['seg'][1] > 10] = 10
-        # plt.imshow(obs['seg'][1])
-        # plt.show()
-
-        # Move up
+        # Move up.
         final_pos = grasp_pos.copy()
         final_pos[2] += 0.3
         self.bhand.move(final_pos, action['quat'], duration=.1)
 
-        # Stay for
+        # Check grasp stability.
         self.bhand.move(final_pos, action['quat'], duration=0.5)
         stable_grasp, num_contacts = self.bhand.is_grasp_stable()
-        print('stable grasp:', stable_grasp)
-        print('----------------')
-        # input('')
 
         # Move home
         self.bhand.move(self.bhand.home_position, action['quat'], duration=.1)
@@ -795,7 +796,9 @@ class Environment:
         # Open fingers
         self.bhand.open()
 
-        return self.get_obs(), {'stable': stable_grasp, 'num_contacts': num_contacts}, is_in_contact
+        return self.get_obs(), {'collision': is_in_contact,
+                                'stable': stable_grasp,
+                                'num_contacts': num_contacts}
 
     def close(self):
         p.disconnect()
@@ -841,3 +844,4 @@ class Environment:
 
     def restore_state(self, state_id):
         p.restoreState(stateId=state_id)
+
