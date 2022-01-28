@@ -224,7 +224,7 @@ class Classifier(nn.Module):
 
 class Regressor(nn.Module):
     def __init__(self):
-        super(Classifier, self).__init__()
+        super(Regressor, self).__init__()
         self.conv1 = nn.Conv2d(1, 16, kernel_size=4, stride=2, padding=1, bias=False)
         self.conv2 = nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False)
         self.fc1 = nn.Linear(4096, 128)
