@@ -21,6 +21,56 @@ def compute_aperture(opening_in_cm):
     return reg.predict(data.reshape(1, -1))
 
 
+class Policy:
+    def __init__(self, params):
+        self.params = params
+        self.rng = np.random.RandomState()
+
+    def seed(self, seed):
+        self.rng.seed(seed)
+
+    def random_sample(self, state):
+        pass
+
+    def predict(self, state):
+        pass
+
+    def init_state_is_valid(self, obs):
+        flat_objs = 0
+        for obj in obs['full_state']:
+            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
+            rot_mat = ori.Quaternion(x=obj_quat[0],
+                                     y=obj_quat[1],
+                                     z=obj_quat[2],
+                                     w=obj_quat[3]).rotation_matrix()
+            angle_z = np.arccos(np.dot(np.array([0, 0, 1]),
+                                       rot_mat[0:3, 2]))
+            if np.abs(angle_z) > 0.1:
+                flat_objs += 1
+
+        if flat_objs == len(obs['full_state']):
+            return False
+        else:
+            return True
+
+    def terminal(self, obs, next_obs):
+        objects = next_obs['full_state']
+
+        is_terminal = True
+        for obj in objects:
+            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
+            if obj_pos[2] < 0:
+                continue
+
+            # Check if there is at least one object in the scene with the axis parallel to world z.
+            rot_mat = ori.Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
+            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
+            if np.abs(angle_z) < 0.1:
+                is_terminal = False
+
+        return is_terminal
+
+
 class PushGrasping:
     def __init__(self, params):
         self.params = params
