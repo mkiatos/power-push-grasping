@@ -18,6 +18,7 @@ class Object:
                  name='',
                  pos=[0.0, 0.0, 0.0],
                  quat=Quaternion(),
+                 size=[],
                  color=[1.0, 1.0, 1.0, 1.0],
                  body_id=None):
         """
@@ -36,6 +37,7 @@ class Object:
         """
         self.name = name
         self.pos = pos
+        self.size = size
         self.home_quat = quat
         self.color = color
         self.body_id = body_id
@@ -520,7 +522,8 @@ class Environment:
 
         return world_pos, world_quat
 
-    def load_obj(self, obj_path, scaling, position, orientation, fixed_base=False, visual_path=None):
+    def load_obj(self, obj_path, scaling=1.0, position=[0, 0, 0], orientation=Quaternion(), fixed_base=False,
+                 visual_path=None):
         template = """<?xml version="1.0" encoding="UTF-8"?>
                       <robot name="obj.urdf">
                           <link name="baseLink">
@@ -578,7 +581,8 @@ class Environment:
         #                                       radius=0.05, length=length)
 
         base_position, base_orientation = self.workspace2world(pos, quat)
-        body_id = self.load_obj(obj_path, 1.0, base_position, base_orientation.as_vector("xyzw"), visual_path=obj_path)
+        body_id = self.load_obj(obj_path, scaling=1.0, position=base_position,
+                                orientation=base_orientation.as_vector("xyzw"), visual_path=obj_path)
 
         # mass = 1.0
         # body_id = p.createMultiBody(mass, col_box_id, visual_shape_id,
@@ -593,6 +597,60 @@ class Environment:
                       pos=base_position,
                       quat=base_orientation,
                       body_id=body_id)
+
+    def add_objects(self):
+        bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])
+
+        def get_pxl_distance(meters, pxl_size=0.005):
+            return meters / pxl_size
+
+        def get_xyz(pxl, size, bounds, pxl_size=0.005):
+            x = -(pxl_size * pxl[0] - bounds[0][1])
+            y = pxl_size * pxl[1] - bounds[1][1]
+            z = size[2] / 2.0
+            return np.array([x, y, z])
+
+        # Sample n objects from the database.
+        nr_objects = self._random.randint(low=5, high=8)
+        obj_paths = self._random.choice(self.scene_generator.obj_files, nr_objects)
+
+        for i in range(len(obj_paths)):
+            obj = Object()
+            base_position, base_orientation = self.workspace2world(np.array([1.0, 1.0, 0.0]), Quaternion())
+            body_id = self.load_obj(obj_paths[i], scaling=1.0, position=base_position,
+                                    orientation=base_orientation.as_vector("xyzw"), visual_path=obj_paths[i])
+            obj.body_id = body_id
+            size = (np.array(p.getAABB(body_id)[1]) - np.array(p.getAABB(body_id)[0])) / 2.0
+            obj.size = size
+
+            max_size = np.sqrt(obj.size[0] ** 2 + obj.size[1] ** 2)
+            erode_size = int(np.round(get_pxl_distance(meters=max_size)))
+
+            obs = self.get_obs()
+            state = utils.get_fused_heightmap(obs, cameras.RealSense.CONFIG, bounds, 0.005)
+
+            free = np.zeros(state.shape, dtype=np.uint8)
+            free[state == 0] = 1
+            free[0, :], free[:, 0], free[-1, :], free[:, -1] = 0, 0, 0, 0
+            free = cv2.erode(free, np.ones((erode_size, erode_size), np.uint8))
+
+            if np.sum(free) == 0:
+                return
+            pixx = utils.sample_distribution(np.float32(free), self._random)
+            pix = np.array([pixx[1], pixx[0]])
+
+            # plt.imshow(free)
+            # plt.plot(pix[0], pix[1], 'ro')
+            # plt.show()
+
+            obj.pos = get_xyz(pix, size, bounds=bounds)
+            theta = self._random.rand() * 2 * np.pi
+            obj.quat = Quaternion().from_rotation_matrix(rot_z(theta))
+
+            p.removeBody(body_id)
+
+            self.objects.append(self.add_object(obj_paths[i], obj.pos, obj.quat))
+            # self.add_box(obj)
 
     def is_static(self):
         """
@@ -669,7 +727,10 @@ class Environment:
         # p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
 
         # Generate a scene with randomly placed.
-        self.scene_generator.reset(self)
+        # self.scene_generator.reset(self)
+        self.add_objects()
+
+        self.remove_flats()
 
         # Pack objects.
         self.hug(force_magnitude=1)
