@@ -79,7 +79,7 @@ class Policy:
         return is_terminal
 
 
-class PushGrasping:
+class PushGrasping2:
     def __init__(self, params):
         self.params = params
 
@@ -350,7 +350,7 @@ class PushGrasping:
         return is_terminal
 
 
-class HeuristicPushGrasping(PushGrasping):
+class HeuristicPushGrasping(PushGrasping2):
     def __init__(self, params):
         super(HeuristicPushGrasping, self).__init__(params)
         self.params = params
@@ -446,30 +446,142 @@ class HeuristicPushGrasping(PushGrasping):
         return env_action
 
 
-class PushGrasping2(Policy):
+class PushGrasping(Policy):
     def __init__(self, params):
-        super(PushGrasping2, self).__init__(params)
+        super(PushGrasping, self).__init__(params)
 
-        self.rotations = params['rotations']
-        self.aperture_limits = params['aperture_limits']
+        self.rotations = params['agent']['fcn']['rotations']
+        self.aperture_limits = params['agent']['regressor']['aperture_limits']
+        self.pxl_size = params['env']['pixel_size']
+        self.bounds = np.array(params['env']['workspace']['bounds'])
+
         self.crop_size = 32
         self.push_distance = 0.1
         self.z = 0.1
-        self.pxl_size = 0.005
 
         self.fcn = ResFCN().to('cuda')
-        self.reg = Regressor().to('cuda')
+        self.fcn_optimizer = optim.Adam(self.fcn.parameters(), lr=params['agent']['fcn']['learning_rate'])
+        self.fcn_criterion = nn.BCELoss(reduction='none')
+        # self.fcn_criterion = nn.SmoothL1Loss(reduction='none')
 
-        self.learn_step_counter = 0.0
+        self.reg = Regressor().to('cuda')
+        self.reg_optimizer = optim.Adam(self.reg.parameters(), lr=params['agent']['regressor']['learning_rate'])
+        self.reg_criterion = nn.L1Loss()
+
+        self.replay_buffer = ReplayBuffer(log_dir=params['log_dir'])
+
+        self.learn_step_counter = 0
+        self.info = {'fcn_loss': [], 'reg_loss': []}
+
+        os.mkdir(os.path.join(params['log_dir'], 'maps'))
+        np.set_printoptions(formatter={'float': lambda x: "{0:0.2f}".format(x)})
+
+    def state_representation(self, obs):
+        state = utils.get_fused_heightmap(obs, cameras.RealSense.CONFIG, self.bounds, self.pxl_size)
+        return state
 
     def pre_process(self, state):
-        pass
+        """
+        Pre-process heightmap (padding and normalization)
+        """
+        # Pad heightmap.
+        diagonal_length = float(state.shape[0]) * np.sqrt(2)
+        diagonal_length = np.ceil(diagonal_length / 16) * 16
+        self.padding_width = int((diagonal_length - state.shape[0]) / 2)
+        padded_heightmap = np.pad(state, self.padding_width, 'constant', constant_values=-0.01)
 
-    def post_process(self, state):
-        pass
+        # Normalize heightmap.
+        image_mean = 0.01
+        image_std = 0.03
+        padded_heightmap = (padded_heightmap - image_mean) / image_std
 
-    def pre_process_aperture(self, state):
-        pass
+        # Add extra channel.
+        padded_heightmap = np.expand_dims(padded_heightmap, axis=0)
+        return padded_heightmap
+
+    def post_process(self, q_maps):
+        """
+        Remove extra padding.
+        """
+
+        w = int(q_maps.shape[2] - 2 * self.padding_width)
+        h = int(q_maps.shape[3] - 2 * self.padding_width)
+        remove_pad = np.zeros((q_maps.shape[0], q_maps.shape[1], w, h))
+
+        for i in range(q_maps.shape[0]):
+            for j in range(q_maps.shape[1]):
+                # remove extra padding
+                q_map = q_maps[i, j, self.padding_width:int(q_maps.shape[2] - self.padding_width),
+                               self.padding_width:int(q_maps.shape[3] - self.padding_width)]
+
+                remove_pad[i][j] = q_map.detach().cpu().numpy()
+
+        return remove_pad
+
+    def pre_process_aperture_img(self, state, p1, theta, plot=False):
+        """
+        Add extra padding, rotate image so as the push always points to the right, crop around the initial push
+        position (something like attention) and finally normalize the cropped image.
+        """
+        # Add extra padding (to handle rotations inside network)
+        diag_length = float(state.shape[0]) * np.sqrt(2)
+        diag_length = np.ceil(diag_length / 16) * 16
+        padding_width = int((diag_length - state.shape[0]) / 2)
+        depth_heightmap = np.pad(state, padding_width, 'constant')
+        padded_shape = depth_heightmap.shape
+
+        p1 += padding_width
+        action_theta = -((theta + (2 * np.pi)) % (2 * np.pi))
+
+        # Rotate image (push always on the right)
+        rot = cv2.getRotationMatrix2D((int(padded_shape[0] / 2), int(padded_shape[1] / 2)),
+                                      action_theta * 180 / np.pi, 1.0)
+        rotated_heightmap = cv2.warpAffine(depth_heightmap, rot, (padded_shape[0], padded_shape[1]))
+
+        # Compute the position of p1 on rotated heightmap
+        rotated_pt = np.dot(rot, (p1[0], p1[1], 1.0))
+        rotated_pt = (int(rotated_pt[0]), int(rotated_pt[1]))
+
+        # Crop heightmap
+        cropped_map = np.zeros((2 * self.crop_size, 2 * self.crop_size), dtype=np.float32)
+        y_start = max(0, rotated_pt[1] - self.crop_size)
+        y_end = min(padded_shape[0], rotated_pt[1] + self.crop_size)
+        x_start = rotated_pt[0]
+        x_end = min(padded_shape[0], rotated_pt[0] + 2 * self.crop_size)
+        cropped_map[0:y_end - y_start, 0:x_end - x_start] = rotated_heightmap[y_start: y_end, x_start: x_end]
+
+        # print( action['opening']['min_width'])
+        if plot:
+            p2 = np.array([0, 0])
+            p2[0] = p1[0] + 20 * np.cos(theta)
+            p2[1] = p1[1] - 20 * np.sin(theta)
+
+            fig, ax = plt.subplots(1, 3)
+            ax[0].imshow(depth_heightmap)
+            ax[0].plot(p1[0], p1[1], 'o', 2)
+            ax[0].plot(p2[0], p2[1], 'x', 2)
+            ax[0].arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
+
+            rotated_p2 = np.array([0, 0])
+            rotated_p2[0] = rotated_pt[0] + 20 * np.cos(0)
+            rotated_p2[1] = rotated_pt[1] - 20 * np.sin(0)
+            ax[1].imshow(rotated_heightmap)
+            ax[1].plot(rotated_pt[0], rotated_pt[1], 'o', 2)
+            ax[1].plot(rotated_p2[0], rotated_p2[1], 'x', 2)
+            ax[1].arrow(rotated_pt[0], rotated_pt[1], rotated_p2[0] - rotated_pt[0], rotated_p2[1] - rotated_pt[1],
+                        width=1)
+
+            ax[2].imshow(cropped_map)
+            plt.show()
+
+        # Normalize maps ( ToDo: find mean and std) # Todo
+        image_mean = 0.01
+        image_std = 0.03
+        cropped_map = (cropped_map - image_mean) / image_std
+        cropped_map = np.expand_dims(cropped_map, axis=0)
+
+        p1 -= padding_width
+        return cropped_map
 
     def random_sample(self, state):
         action = np.zeros((4,))
@@ -479,7 +591,7 @@ class PushGrasping2(Policy):
         action[3] = self.rng.uniform(self.aperture_limits[0], self.aperture_limits[1])
         return action
 
-    def guided_exploration(self, state, sample_limits=[0.09, 0.1]):
+    def guided_exploration(self, state, sample_limits=[0.08, 0.15]):
         obj_ids = np.argwhere(state > self.z)
 
         # Sample initial position.
@@ -489,6 +601,11 @@ class PushGrasping2(Policy):
                 dists = np.linalg.norm(np.array([y, x]) - obj_ids, axis=1)
                 if sample_limits[0] / self.pxl_size < np.min(dists) < sample_limits[1] / self.pxl_size:
                     valid_pxl_map[y, x] = 255
+
+        # fig, ax = plt.subplots(1, 2)
+        # ax[0].imshow(state)
+        # ax[1].imshow(valid_pxl_map)
+        # plt.show()
 
         valid_pxls = np.argwhere(valid_pxl_map == 255)
         valid_ids = np.arange(0, valid_pxls.shape[0])
@@ -520,6 +637,17 @@ class PushGrasping2(Policy):
         step_angle = 2 * np.pi / self.rotations
         discrete_theta = round(theta / step_angle) * step_angle
 
+        # print(theta, discrete_theta)
+        #
+        # p2[0] = p1[0] + 20 * np.cos(discrete_theta)
+        # p2[1] = p1[1] - 20 * np.sin(discrete_theta)
+        #
+        # plt.imshow(state)
+        # plt.plot(p1[0], p1[1], 'o', 2)
+        # plt.plot(p2[0], p2[1], 'x', 2)
+        # plt.arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
+        # plt.show()
+
         # Sample aperture uniformly
         aperture = self.rng.uniform(self.aperture_limits[0], self.aperture_limits[1])
 
@@ -528,43 +656,138 @@ class PushGrasping2(Policy):
         action[1] = p1[1]
         action[2] = discrete_theta
         action[3] = aperture
+
         return action
 
     def explore(self, state):
-        epsilon = self.params['epsilon_end'] + (self.params['epsilon_start'] - self.params['epsilon_end']) * \
-                  math.exp(-1 * self.learn_step_counter / self.params['epsilon_decay'])
-        self.info['epsilon'] = epsilon  # save for plotting
+        explore_prob = max(0.8 * np.power(0.9998, self.learn_step_counter), 0.1)
+        print('explore_prob:', explore_prob)
 
-        if self.rng.rand() < epsilon:
-            if self.rng.rand() < 0.5:
-                action = self.guided_exploration(state)
-            else:
-                action = self.random_sample(state)
+        if self.rng.rand() < explore_prob:
+            action = self.guided_exploration(state)
         else:
             action = self.predict(state)
-
+        print('--------')
+        print('Explore')
+        print('action:', action)
+        print('--------')
         return action
 
     def predict(self, state):
-        # action = self.random_sample(state)
-        action = self.guided_exploration(state)
+
+        # Find optimal position and orientation
+        x = torch.FloatTensor(self.pre_process(state)).unsqueeze(0).to('cuda')
+        out_prob = self.fcn(x, is_volatile=True)
+        out_prob = self.post_process(out_prob)
+
+        self.plot_maps(state, out_prob)
+
+        best_action = np.unravel_index(np.argmax(out_prob), out_prob.shape)
+        p1 = np.array([best_action[3], best_action[2]])
+        theta = best_action[0] * 2 * np.pi / self.rotations
+
+        p2 = np.array([0, 0])
+        p2[0] = p1[0] + 20 * np.cos(theta)
+        p2[1] = p1[1] - 20 * np.sin(theta)
+        #
+        # plt.imshow(state)
+        # plt.plot(p1[0], p1[1], 'o', 2)
+        # plt.plot(p2[0], p2[1], 'x', 2)
+        # plt.arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
+        # plt.show()
+
+        # Find optimal aperture
+        aperture_img = self.pre_process_aperture_img(state, p1, theta)
+        x = torch.FloatTensor(aperture_img).unsqueeze(0).to('cuda')
+        aperture = self.reg(x).detach().cpu().numpy()[0, 0]
+        # print('aperture', aperture.detach().cpu().numpy()[0, 0])
+
+        # Undo normalization
+        aperture = utils.min_max_scale(aperture,
+                                       range=[0, 1],
+                                       target_range=[self.aperture_limits[0], self.aperture_limits[1]])
+
+        action = np.zeros((4,))
+        action[0] = p1[0]
+        action[1] = p1[1]
+        action[2] = theta
+        action[3] = aperture
+        print('--------')
+        print('Predict')
+        print('action:', action)
+        print('--------')
         return action
 
-    def learn(self, state, label):
+    def get_fcn_labels(self, state, action):
+        heightmap = self.pre_process(state)
+
+        angle = (action[2] + (2 * np.pi)) % (2 * np.pi)
+        rot_id = round(angle / (2 * np.pi / 16))
+
+        action_area = np.zeros((state.shape[0], state.shape[1]))
+        action_area[int(action[1]), int(action[0])] = 1.0
+        label = np.zeros((1, heightmap.shape[1], heightmap.shape[2]))
+        label[0, self.padding_width:heightmap.shape[1] - self.padding_width,
+              self.padding_width:heightmap.shape[2] - self.padding_width] = action_area
+
+        return heightmap, rot_id, label
+
+    def learn(self, transition):
         # Store state and label to replay buffer
+        if transition['label']:
+            self.replay_buffer.store(transition)
 
-        # Sample from replay buffer
+            # if self.replay_buffer.size() < 50:
+            #     return
 
-        # Update FCN model
+            # Sample from replay buffer
+            state, action = self.replay_buffer.sample()
 
-        # If label = 1 (successful grasp), update regressor
+            # Update FCN
+            heightmap, rot_id, label = self.get_fcn_labels(state, action)
+            x = torch.FloatTensor(heightmap).unsqueeze(0).to('cuda')
+            label = torch.FloatTensor(label).unsqueeze(0).to('cuda')
+            rotations = np.array([rot_id])
+            q_maps = self.fcn(x, specific_rotation=rotations)
 
-        pass
+            # Compute loss in the whole scene
+            loss = self.fcn_criterion(q_maps, label)
+            loss = torch.sum(loss)
+            print('fcn_loss:', loss.detach().cpu().numpy())
+            self.info['fcn_loss'].append(loss.detach().cpu().numpy())
 
-    def action(self, action, bounds, pxl_size):
+            self.fcn_optimizer.zero_grad()
+            loss.backward()
+            self.fcn_optimizer.step()
+
+            # Update regression network
+            x = torch.FloatTensor(self.pre_process_aperture_img(state,
+                                                                p1=np.array([action[0], action[1]]),
+                                                                theta=action[2])).unsqueeze(0).to('cuda')
+            # Normalize aperture to range 0-1
+            normalized_aperture = utils.min_max_scale(action[3],
+                                                      range=[self.aperture_limits[0], self.aperture_limits[1]],
+                                                      target_range=[0, 1])
+            gt_aperture = torch.FloatTensor(np.array([normalized_aperture])).unsqueeze(0).to('cuda')
+            pred_aperture = self.reg(x)
+
+            print('APERTURES')
+            print(gt_aperture, pred_aperture)
+
+            loss = self.reg_criterion(pred_aperture, gt_aperture)
+            print('reg_loss:', loss.detach().cpu().numpy())
+            self.info['reg_loss'].append(loss.detach().cpu().numpy())
+
+            self.reg_optimizer.zero_grad()
+            loss.backward()
+            self.reg_optimizer.step()
+
+            self.learn_step_counter += 1
+
+    def action(self, action):
         # Convert from pixels to 3d coordinates.
-        x = -(pxl_size * action[0] - bounds[0][1])
-        y = pxl_size * action[1] - bounds[1][1]
+        x = -(self.pxl_size * action[0] - self.bounds[0][1])
+        y = self.pxl_size * action[1] - self.bounds[1][1]
         quat = ori.Quaternion.from_rotation_matrix(np.matmul(ori.rot_y(-np.pi / 2), ori.rot_x(action[2])))
 
         return {'pos': np.array([x, y, self.z]),
@@ -572,3 +795,45 @@ class PushGrasping2(Policy):
                 'aperture': action[3],
                 'push_distance': self.push_distance}
 
+    def plot_maps(self, state, out_prob):
+
+        glob_max_prob = np.max(out_prob)
+        fig, ax = plt.subplots(4, 4)
+        for i in range(16):
+            x = int(i / 4)
+            y = i % 4
+
+            min_prob = np.min(out_prob[i][0])
+            max_prob = np.max(out_prob[i][0])
+
+            prediction_vis = utils.min_max_scale(out_prob[i][0],
+                                                 range=(min_prob, max_prob),
+                                                 target_range=(0, 1))
+            best_pt = np.unravel_index(prediction_vis.argmax(), prediction_vis.shape)
+            maximum_prob = np.max(out_prob[i][0])
+
+            ax[x, y].imshow(state, cmap='gray')
+            ax[x, y].imshow(prediction_vis, alpha=0.5)
+            ax[x, y].set_title(str(i) + ', ' + str(format(maximum_prob, ".3f")))
+
+            if glob_max_prob == max_prob:
+                ax[x, y].plot(best_pt[1], best_pt[0], 'rx')
+            else:
+                ax[x, y].plot(best_pt[1], best_pt[0], 'ro')
+            dx = 20 * np.cos((i / 16) * 2 * np.pi)
+            dy = -20 * np.sin((i / 16) * 2 * np.pi)
+            ax[x, y].arrow(best_pt[1], best_pt[0], dx, dy, width=2, color='g')
+
+        plt.savefig(os.path.join(self.params['log_dir'], 'maps', 'map_' + str(self.learn_step_counter) + '.png'),
+                    dpi=720)
+        plt.close()
+
+    def save(self, epoch):
+        folder_name = os.path.join(self.params['log_dir'], 'model_' + str(epoch))
+        os.mkdir(folder_name)
+        torch.save(self.fcn.state_dict(), os.path.join(folder_name, 'fcn.pt'))
+        torch.save(self.reg.state_dict(), os.path.join(folder_name, 'reg.pt'))
+
+    def load(self, log_dir):
+        self.fcn.load_state_dict(torch.load(os.path.join(log_dir, 'fcn.pt')))
+        self.reg.load_state_dict(torch.load(os.path.join(log_dir, 'reg.pt')))
