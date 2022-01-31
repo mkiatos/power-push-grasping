@@ -2,6 +2,10 @@ import open3d as o3d
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
+import os
+import shutil
+import pickle
+import yaml
 
 from ppg.utils import pybullet_utils
 
@@ -166,3 +170,26 @@ def sample_distribution(prob, rng, n_samples=1):
         np.arange(len(flat_prob)), n_samples, p=flat_prob, replace=False)
     rand_ind_coords = np.array(np.unravel_index(rand_ind, prob.shape)).T
     return np.int32(rand_ind_coords.squeeze())
+
+
+class Logger:
+    def __init__(self, log_dir):
+        self.log_dir = log_dir
+
+        # Create the log directory
+        if os.path.exists(log_dir):
+            answer = input('Directory ', log_dir, 'exists, do you want to remove it permanently? (y/n)')
+            if answer == 'y':
+                shutil.rmtree(log_dir)
+                os.mkdir(log_dir)
+            else:
+                exit()
+        else:
+            os.mkdir(log_dir)
+
+    def log_data(self, data, filename):
+        pickle.dump(data, open(os.path.join(self.log_dir, filename), 'wb'))
+
+    def log_yml(self, dict, filename):
+        with open(os.path.join(self.log_dir, filename + '.yml'), 'w') as stream:
+            yaml.dump(dict, stream)
