@@ -144,17 +144,16 @@ class ResFCN(nn.Module):
                                             prob.size(), align_corners=True)
             out_prob = F.grid_sample(prob, flow_grid_after, mode='nearest', align_corners=True)
 
-            # # Image-wide softmax
-            # output_shape = out_prob.shape
-            # out_prob = out_prob.view(output_shape[0], -1)
-            # out_prob = torch.softmax(out_prob, dim=1)
-            # out_prob = out_prob.view(output_shape).to(dtype=torch.float)
+            # Image-wide softmax
+            output_shape = out_prob.shape
+            out_prob = out_prob.view(output_shape[0], -1)
+            out_prob = torch.softmax(out_prob, dim=1)
+            out_prob = out_prob.view(output_shape).to(dtype=torch.float)
 
             return out_prob
 
         else:
             thetas = np.radians(specific_rotation * (360 / self.nr_rotations))
-
             affine_before = torch.zeros((depth_heightmap.shape[0], 2, 3))
             for i in range(len(thetas)):
                 # Compute sample grid for rotation before neural network
@@ -191,11 +190,11 @@ class ResFCN(nn.Module):
             # Forward pass through branches, undo rotation on output predictions, upsample results
             out_prob = F.grid_sample(prob, flow_grid_after, mode='nearest', align_corners=True)
 
-            # # Image-wide softmax
-            # output_shape = out_prob.shape
-            # out_prob = out_prob.view(output_shape[0], -1)
-            # out_prob = torch.softmax(out_prob, dim=1)
-            # out_prob = out_prob.view(output_shape).to(dtype=torch.float)
+            # Image-wide softmax
+            output_shape = out_prob.shape
+            out_prob = out_prob.view(output_shape[0], -1)
+            out_prob = torch.softmax(out_prob, dim=1)
+            out_prob = out_prob.view(output_shape).to(dtype=torch.float)
 
             return out_prob
 
@@ -235,6 +234,6 @@ class Regressor(nn.Module):
         x = nn.functional.relu(self.conv2(x))
         x = x.view(x.shape[0], -1)
         x = nn.functional.relu(self.fc1(x))
-        x = self.fc2(x)
+        x = torch.sigmoid(self.fc2(x))
         return x
 
