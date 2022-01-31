@@ -56,10 +56,10 @@ class SceneGenerator:
         self.rng = np.random.RandomState()
 
         self.obj_files = []
-        for obj_file in os.listdir(os.path.join(assets_root, 'objects/push_grasping_objs/obj')):
+        for obj_file in os.listdir(os.path.join(assets_root, 'objects/obj')):
             if not obj_file.endswith('.obj'):
                 continue
-            self.obj_files.append(os.path.join(assets_root, 'objects/push_grasping_objs/obj', obj_file))
+            self.obj_files.append(os.path.join(assets_root, 'objects/obj', obj_file))
 
     def seed(self, seed):
         self.rng.seed(seed)
@@ -362,7 +362,7 @@ class FloatingBHand(FloatingGripper):
             positionGains=[100 * self.speed] * len(self.indices)
         )
 
-    def close(self, joint_vals=[0.0, 1.7, 1.7, 1.7], duration=2):
+    def close(self, joint_vals=[0.0, 1.8, 1.8, 1.8], duration=2):
         self.move_fingers(joint_vals)
 
     def open(self, joint_vals=[0.0, 0.6, 0.6, 0.6]):
@@ -477,7 +477,7 @@ class Environment:
         self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25]])  # workspace limits
         self.assets_root = assets_root
         self.workspace_pos = np.array(workspace_pos)
-        self.scene_generator = SceneGenerator(assets_root, [5, 8], self.bounds)
+        self.scene_generator = SceneGenerator(assets_root, [2], self.bounds)
 
         # Setup cameras.
         self.agent_cams = []
@@ -625,7 +625,7 @@ class Environment:
             return np.array([x, y, z])
 
         # Sample n objects from the database.
-        nr_objects = self._random.randint(low=5, high=8)
+        nr_objects = self._random.randint(low=2, high=3)
         obj_paths = self._random.choice(self.scene_generator.obj_files, nr_objects)
 
         for i in range(len(obj_paths)):
