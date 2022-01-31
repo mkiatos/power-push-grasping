@@ -8,11 +8,94 @@ import copy
 import os
 import shutil
 from tabulate import tabulate
+import matplotlib.pyplot as plt
 
 from ppg.environment import Environment
 from ppg.agent import PushGrasping, HeuristicPushGrasping, PushGrasping2
 from ppg.utils import utils
 from ppg import cameras
+
+
+def run_episode(policy, env, train=True):
+    obs = env.reset()
+
+    while not policy.init_state_is_valid(obs):
+        obs = env.reset()
+
+    episode_data = {'successes': 0,
+                    'fails': 0,
+                    'attempts': 0,
+                    'collisions': 0,
+                    'objects_removed': 0,
+                    'objects_in_scene': len(obs['full_state'])}
+    while True:
+        state = policy.state_representation(obs)
+
+        # Select action
+        if train:
+            action = policy.explore(state)
+        else:
+            action = policy.predict(state)
+
+        env_action = policy.action(action)
+
+        # Step environment.
+        next_obs, grasp_info = env.step(env_action)
+
+        # Update logger
+        episode_data['attempts'] += 1
+        if grasp_info['stable']:
+            episode_data['successes'] += 1
+            episode_data['objects_removed'] += 1
+        else:
+            episode_data['fails'] += 1
+            if grasp_info['collision']:
+                episode_data['collisions'] += 1
+
+        if train:
+            transition = {'state': state, 'action': action, 'label': grasp_info['stable']}
+            policy.learn(transition)
+
+        if policy.terminal(obs, next_obs):
+            break
+
+        obs = copy.deepcopy(next_obs)
+
+    return episode_data
+
+
+def train_agent(log_path, n_scenes, save_every=100, seed=0):
+    with open('../yaml/bhand.yml', 'r') as stream:
+        params = yaml.safe_load(stream)
+
+    # Create a logger
+    if os.path.exists(log_path):
+        print('Directory ', log_path, 'exists, do you want to remove it? (y/n)')
+        answer = input('')
+        if answer == 'y':
+            shutil.rmtree(log_path)
+            os.mkdir(log_path)
+        else:
+            exit()
+    else:
+        os.mkdir(log_path)
+
+    params['log_dir'] = log_path
+
+    env = Environment(assets_root='../assets/', workspace_pos=[0.0, 0.0, 0.0])
+
+    policy = PushGrasping(params)
+    policy.seed(seed)
+
+    rng = np.random.RandomState()
+    rng.seed(seed)
+
+    for i in range(n_scenes):
+        episode_seed = rng.randint(0, pow(2, 32) - 1)
+        env.seed(episode_seed)
+        episode_data = run_episode(policy, env, train=True)
+        if i % save_every == 0:
+            policy.save(epoch=i)
 
 
 def eval(n_scenes, log_path, seed=0):
@@ -31,6 +114,8 @@ def eval(n_scenes, log_path, seed=0):
     with open('../yaml/bhand.yml', 'r') as stream:
         params = yaml.safe_load(stream)
 
+    params['log_dir'] = log_path
+
     pxl_size = 0.005
     bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])
     env = Environment(assets_root='../assets/', workspace_pos=[0.0, 0.0, 0.0])
@@ -40,8 +125,9 @@ def eval(n_scenes, log_path, seed=0):
     # policy = HeuristicPushGrasping(params)
     # policy.seed(seed)
 
-    policy = PushGrasping2(params)
-    policy.seed(seed)
+    policy = PushGrasping(params)
+    policy.load('../logs/train_self_supervised/model_200')
+    # policy.seed(seed)
 
     rng = np.random.RandomState()
     rng.seed(seed)
@@ -52,7 +138,7 @@ def eval(n_scenes, log_path, seed=0):
         episode_seed = rng.randint(0, pow(2, 32) - 1)
         env.seed(episode_seed)
 
-        print('Episode seed:', episode_seed)
+        print('Episode {} seed{}:'.format(i, episode_seed))
 
         obs = env.reset()
         while not policy.init_state_is_valid(obs):
@@ -64,7 +150,7 @@ def eval(n_scenes, log_path, seed=0):
                         'objects_removed': 0,
                         'objects_in_scene': len(obs['full_state'])}
         while True:
-            state = utils.get_fused_heightmap(obs, cameras.RealSense.CONFIG, bounds, pxl_size)
+            state = policy.state_representation(obs)
             if len(np.argwhere(state > 0.1)) == 0:
                 break
 
@@ -73,10 +159,10 @@ def eval(n_scenes, log_path, seed=0):
                 break
                 # TODO: why none?
 
-            print(action)
-            env_action = policy.action(action, bounds, pxl_size)
+            env_action = policy.action(action)
 
             next_obs, grasp_info = env.step(env_action)
+            print('Success:', grasp_info['stable'])
 
             if grasp_info['collision']:
                 continue
@@ -135,6 +221,8 @@ if __name__ == "__main__":
     #           'log_path': '../logs/classifier'}
     # train_classifier(params)
 
-    eval(n_scenes=100, log_path='../logs/tmp', seed=1)
+    train_agent(log_path='../logs/train_self_supervised', n_scenes=10000, seed=0)
+
+    # eval(n_scenes=100, log_path='../logs/eval_self_supervised', seed=1)
 
     # analyze(log_dir='../logs/eval_heuristic_policy')
