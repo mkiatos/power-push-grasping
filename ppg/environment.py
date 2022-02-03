@@ -451,9 +451,9 @@ class Environment:
             # Move default camera closer to the scene.
             target = np.array(workspace_pos)
             p.resetDebugVisualizerCamera(
-                cameraDistance=1.2,
+                cameraDistance=0.75,
                 cameraYaw=180,
-                cameraPitch=-35,
+                cameraPitch=-45,
                 cameraTargetPosition=target)
         else:
             p.connect(p.DIRECT)
