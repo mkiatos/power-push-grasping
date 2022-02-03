@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+import torchvision
 
 import numpy as np
 
@@ -224,16 +225,29 @@ class Classifier(nn.Module):
 class Regressor(nn.Module):
     def __init__(self):
         super(Regressor, self).__init__()
-        self.conv1 = nn.Conv2d(1, 16, kernel_size=4, stride=2, padding=1, bias=False)
-        self.conv2 = nn.Conv2d(16, 16, kernel_size=4, stride=2, padding=1, bias=False)
-        self.fc1 = nn.Linear(4096, 128)
-        self.fc2 = nn.Linear(128, 1)
+        self.model = torchvision.models.resnet50(pretrained=True)
+        self.model.fc = nn.Linear(2048, 1024)
+
+        # self.model = torchvision.models.resnet18(pretrained=True)
+        # self.model.fc = nn.Linear(512, 256)
+
+        # self.conv1 = nn.Conv2d(1, 16, kernel_size=4, stride=2, padding=1, bias=False)
+        # self.conv2 = nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1, bias=False)
+        self.fc1 = nn.Linear(1024, 256)
+
+        self.fc21 = nn.Linear(256, 1)
+        self.fc22 = nn.Linear(256, 1)
 
     def forward(self, x):
-        x = nn.functional.relu(self.conv1(x))
-        x = nn.functional.relu(self.conv2(x))
-        x = x.view(x.shape[0], -1)
+        # x = nn.functional.relu(self.conv1(x))
+        # x = nn.functional.relu(self.conv2(x))
+        # x = x.view(x.shape[0], -1)
+        # x = nn.functional.relu(self.fc1(x))
+
+        x = self.model(x)
         x = nn.functional.relu(self.fc1(x))
-        x = torch.sigmoid(self.fc2(x))
+        x = torch.sigmoid(self.fc21(x))
+
         return x
+
 
