@@ -6,6 +6,8 @@ PyBullet Utilities
 
 import pybullet as p
 import numpy as np
+import os
+import time
 
 from ppg.utils.orientation import Quaternion
 
@@ -125,3 +127,72 @@ def draw_pose(pos, quat, length=0.1, **kwargs):
         frame_axis = pose[0:3, k] * length + pose[0:3, 3]
         add_line(start=pose[0:3, 3], end=frame_axis, color=axis, **kwargs)
 
+
+def load_obj(obj_path, scaling=1.0, position=[0, 0, 0], orientation=Quaternion(), fixed_base=False):
+    template = """<?xml version="1.0" encoding="UTF-8"?>
+                  <robot name="obj.urdf">
+                      <link name="baseLink">
+                          <contact>
+                              <lateral_friction value="1.0"/>
+                              <rolling_friction value="0.0001"/>
+                              <inertia_scaling value="3.0"/>
+                          </contact>
+                          <inertial>
+                              <origin rpy="0 0 0" xyz="0 0 0"/>
+                              <mass value="1"/>
+                              <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
+                          </inertial>
+                          <visual>
+                              <origin rpy="0 0 0" xyz="0 0 0"/>
+                              <geometry>
+                                  <mesh filename="{0}" scale="1 1 1"/>
+                              </geometry>
+                              <material name="mat_2_0">
+                                  <color rgba="0.5 0.5 0.5 1.0" />
+                              </material>
+                          </visual>
+                          <collision>
+                              <origin rpy="0 0 0" xyz="0 0 0"/>
+                              <geometry>
+                                  <mesh filename="{1}" scale="1 1 1"/>
+                              </geometry>
+                          </collision>
+                      </link>
+                  </robot>"""
+    urdf_path = '.tmp_my_obj_%.8f%.8f.urdf' % (time.time(), np.random.rand())
+    with open(urdf_path, "w") as f:
+        f.write(template.format(obj_path, obj_path))
+    body_id = p.loadURDF(
+        fileName=urdf_path,
+        basePosition=position,
+        baseOrientation=orientation,
+        globalScaling=scaling,
+        useFixedBase=fixed_base
+    )
+    os.remove(urdf_path)
+
+    return body_id
+
+
+def get_distances_from_target(obs):
+    objects = obs['full_state']
+
+    distances = {}
+    for target in objects:
+        if target.pos[2] < 0:
+            continue
+
+        distances[target.body_id] = []
+        for obj in objects:
+            if obj.pos[2] < 0 or target.body_id == obj.body_id:
+                continue
+
+            points = p.getClosestPoints(target.body_id, obj.body_id, distance=0.1)
+            if len(points) > 0:
+                dist = np.linalg.norm(np.array(points[0][5]) - np.array(points[0][6]))
+                distances[target.body_id].append(dist)
+
+    for obj_id in distances:
+        distances[obj_id] = np.min(distances[obj_id])
+
+    return distances
