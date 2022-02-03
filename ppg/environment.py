@@ -350,11 +350,8 @@ class FloatingBHand(FloatingGripper):
                 body_b.append(pnt[2])
             total_contacts += len(contacts)
 
-        # print('grasped objects:', len(np.unique(body_b)))
-        # print('distals/total: {}/{}'.format(distal_contacts, total_contacts))
-
         if distal_contacts == total_contacts or len(np.unique(body_b)) != 1:
-            return False, 0
+            return False, total_contacts
         elif distal_contacts > total_contacts:
             assert (distal_contacts > total_contacts)
         else:
@@ -431,10 +428,10 @@ class Environment:
                  disp=True,
                  hz=240):
 
-        self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25]])  # workspace limits
+        self.pxl_size = 0.005
+        self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])  # workspace limits
         self.assets_root = assets_root
         self.workspace_pos = np.array(workspace_pos)
-        self.scene_generator = SceneGenerator(assets_root, [2], self.bounds)
 
         # Setup cameras.
         self.agent_cams = []
@@ -443,6 +440,17 @@ class Environment:
             config_world['pos'] = self.workspace2world(config['pos'])[0]
             config_world['target_pos'] = self.workspace2world(config['target_pos'])[0]
             self.agent_cams.append(SimCamera(config_world))
+
+        self.bhand = None
+
+        self.objects = []
+        self.obj_files = []
+        for obj_file in os.listdir(os.path.join(assets_root, 'objects/obj')):
+            if not obj_file.endswith('.obj'):
+                continue
+            self.obj_files.append(os.path.join(assets_root, 'objects/obj', obj_file))
+
+        self.rng = np.random.RandomState()
 
         # Start PyBullet.
         if disp:
@@ -461,6 +469,11 @@ class Environment:
         p.setAdditionalSearchPath(self.assets_root)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         p.setTimeStep(1.0 / hz)
+
+        np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
+
+    def seed(self, seed):
+        self.rng.seed(seed)
 
     def workspace2world(self, pos=None, quat=None, inv=False):
         """
@@ -494,75 +507,14 @@ class Environment:
 
         return world_pos, world_quat
 
-    def load_obj(self, obj_path, scaling=1.0, position=[0, 0, 0], orientation=Quaternion(), fixed_base=False,
-                 visual_path=None):
-        template = """<?xml version="1.0" encoding="UTF-8"?>
-                      <robot name="obj.urdf">
-                          <link name="baseLink">
-                              <contact>
-                                  <lateral_friction value="1.0"/>
-                                  <rolling_friction value="0.0001"/>
-                                  <inertia_scaling value="3.0"/>
-                              </contact>
-                              <inertial>
-                                  <origin rpy="0 0 0" xyz="0 0 0"/>
-                                  <mass value="1"/>
-                                  <inertia ixx="1" ixy="0" ixz="0" iyy="1" iyz="0" izz="1"/>
-                              </inertial>
-                              <visual>
-                                  <origin rpy="0 0 0" xyz="0 0 0"/>
-                                  <geometry>
-                                      <mesh filename="{0}" scale="1 1 1"/>
-                                  </geometry>
-                                  <material name="mat_2_0">
-                                      <color rgba="0.5 0.5 0.5 1.0" />
-                                  </material>
-                              </visual>
-                              <collision>
-                                  <origin rpy="0 0 0" xyz="0 0 0"/>
-                                  <geometry>
-                                      <mesh filename="{1}" scale="1 1 1"/>
-                                  </geometry>
-                              </collision>
-                          </link>
-                      </robot>"""
-        urdf_path = '.tmp_my_obj_%.8f%.8f.urdf' % (time.time(), np.random.rand())
-        with open(urdf_path, "w") as f:
-            f.write(template.format(obj_path, obj_path))
-        body_id = p.loadURDF(
-            fileName=urdf_path,
-            basePosition=position,
-            baseOrientation=orientation,
-            globalScaling=scaling,
-            useFixedBase=fixed_base
-        )
-        os.remove(urdf_path)
-
-        return body_id
-
-    def add_object(self, obj_path, pos, quat):
+    def add_single_object(self, obj_path, pos, quat):
         """
         Adds an object in the scene
         """
-        # col_box_id = p.createCollisionShape(shapeType=p.GEOM_MESH, fileName=obj_path)
-        # visual_shape_id = p.createVisualShape(shapeType=p.GEOM_MESH, fileName=obj_path)
-
-        # length = 0.15
-        # col_box_id = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.05, height=length)
-        # visual_shape_id = p.createVisualShape(shapeType=p.GEOM_CYLINDER,
-        #                                       radius=0.05, length=length)
 
         base_position, base_orientation = self.workspace2world(pos, quat)
-        body_id = self.load_obj(obj_path, scaling=1.0, position=base_position,
-                                orientation=base_orientation.as_vector("xyzw"), visual_path=obj_path)
-
-        # mass = 1.0
-        # body_id = p.createMultiBody(mass, col_box_id, visual_shape_id,
-        #                             base_position, base_orientation.as_vector("xyzw"))
-        # p.changeDynamics(body_id, -1, lateralFriction=1.0, spinningFriction=1.0,
-        #                  rollingFriction=0.0001, frictionAnchor=True)
-        for i in range(1000):
-            p.stepSimulation()
+        body_id = pybullet_utils.load_obj(obj_path, scaling=1.0, position=base_position,
+                                          orientation=base_orientation.as_vector("xyzw"))
 
         return Object(name=obj_path.split('/')[-1].split('.')[0],
                       pos=base_position,
@@ -570,35 +522,33 @@ class Environment:
                       body_id=body_id)
 
     def add_objects(self):
-        bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])
 
-        def get_pxl_distance(meters, pxl_size=0.005):
-            return meters / pxl_size
+        def get_pxl_distance(meters):
+            return meters / self.pxl_size
 
-        def get_xyz(pxl, size, bounds, pxl_size=0.005):
-            x = -(pxl_size * pxl[0] - bounds[0][1])
-            y = pxl_size * pxl[1] - bounds[1][1]
-            z = size[2] / 2.0
+        def get_xyz(pxl, obj_size):
+            x = -(self.pxl_size * pxl[0] - self.bounds[0, 1])
+            y = self.pxl_size * pxl[1] - self.bounds[1, 1]
+            z = obj_size[2]
             return np.array([x, y, z])
 
         # Sample n objects from the database.
-        nr_objects = self._random.randint(low=2, high=3)
-        obj_paths = self._random.choice(self.scene_generator.obj_files, nr_objects)
+        nr_objects = self.rng.randint(low=5, high=7)
+        obj_paths = self.rng.choice(self.obj_files, nr_objects)
 
         for i in range(len(obj_paths)):
             obj = Object()
             base_position, base_orientation = self.workspace2world(np.array([1.0, 1.0, 0.0]), Quaternion())
-            body_id = self.load_obj(obj_paths[i], scaling=1.0, position=base_position,
-                                    orientation=base_orientation.as_vector("xyzw"), visual_path=obj_paths[i])
+            body_id = pybullet_utils.load_obj(obj_path=obj_paths[i], scaling=1.0, position=base_position,
+                                              orientation=base_orientation.as_vector("xyzw"))
             obj.body_id = body_id
             size = (np.array(p.getAABB(body_id)[1]) - np.array(p.getAABB(body_id)[0])) / 2.0
-            obj.size = size
 
-            max_size = np.sqrt(obj.size[0] ** 2 + obj.size[1] ** 2)
+            max_size = np.sqrt(size[0] ** 2 + size[1] ** 2)
             erode_size = int(np.round(get_pxl_distance(meters=max_size)))
 
             obs = self.get_obs()
-            state = utils.get_fused_heightmap(obs, cameras.RealSense.CONFIG, bounds, 0.005)
+            state = utils.get_fused_heightmap(obs, cameras.RealSense.CONFIG, self.bounds, self.pxl_size)
 
             free = np.zeros(state.shape, dtype=np.uint8)
             free[state == 0] = 1
@@ -607,38 +557,159 @@ class Environment:
 
             if np.sum(free) == 0:
                 return
-            pixx = utils.sample_distribution(np.float32(free), self._random)
+            pixx = utils.sample_distribution(np.float32(free), self.rng)
             pix = np.array([pixx[1], pixx[0]])
 
             # plt.imshow(free)
             # plt.plot(pix[0], pix[1], 'ro')
             # plt.show()
 
-            obj.pos = get_xyz(pix, size, bounds=bounds)
-            theta = self._random.rand() * 2 * np.pi
-            obj.quat = Quaternion().from_rotation_matrix(rot_z(theta))
+            pos = get_xyz(pix, size)
+            theta = self.rng.rand() * 2 * np.pi
+            quat = Quaternion().from_rotation_matrix(rot_z(theta))
 
             p.removeBody(body_id)
 
-            self.objects.append(self.add_object(obj_paths[i], obj.pos, obj.quat))
-            # self.add_box(obj)
+            self.objects.append(self.add_single_object(obj_paths[i], pos, quat))
 
-    def is_static(self):
+    def reset(self):
+        # Reset simulation.
+        p.resetSimulation()
+        p.setGravity(0, 0, -9.8)
+
+        # Temporarily disable rendering to load scene faster.
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+
+        # Load UR5 robot arm equipped with Barrett hand.
+        self.bhand = FloatingBHand('../assets/robot_hands/barrett/bh_282.urdf',
+                                   home_position=np.array([0.7, 0.0, 0.2]))
+
+        # Load plane and workspace.
+        pybullet_utils.load_urdf(p, PLANE_URDF_PATH, [0, 0, -0.7])
+        table_id = pybullet_utils.load_urdf(p, UR5_WORKSPACE_URDF_PATH, self.workspace_pos)
+        p.changeDynamics(table_id, -1, lateralFriction=0.1)
+
+        # Re-enable rendering.
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+
+        # Generate a scene with randomly placed objects.
+        self.objects = []
+        self.add_objects()
+
+        # Remove flat objects.
+        self.remove_flats()
+
+        # Pack objects.
+        self.hug(force_magnitude=1)
+
+        while self.is_static():
+            time.sleep(0.001)
+            p.stepSimulation()
+
+        return self.get_obs()
+
+    def step(self, action):
+        # Move to pre-grasp position.
+        pre_grasp_pos = action['pos'].copy()
+        pre_grasp_pos[2] += 0.3
+        self.bhand.move(pre_grasp_pos, action['quat'], duration=0.1)
+
+        # Set finger configuration.
+        theta = action['aperture']
+        self.bhand.move_fingers([0.0, theta, theta, theta], duration=.1, force=5)
+
+        is_in_contact = self.bhand.move(action['pos'], action['quat'], duration=.5, stop_at_contact=True)
+
+        # Check if during reaching the pre-grasp position, the hand collides with some object.
+        if not is_in_contact:
+
+            obs = self.get_obs()
+            dists = pybullet_utils.get_distances_from_target(obs)
+
+            # Push the hand forward.
+            rot = action['quat'].rotation_matrix()
+            grasp_pos = action['pos'] + rot[0:3, 2] * action['push_distance']
+            self.bhand.move(grasp_pos, action['quat'], duration=2)
+
+            next_obs = self.get_obs()
+            next_dists = pybullet_utils.get_distances_from_target(next_obs)
+
+            diffs = {}
+            for obj_id in dists:
+                diffs[obj_id] = np.array(next_dists[obj_id] - dists[obj_id])
+
+            # Close the fingers.
+            self.bhand.close()
+        else:
+            grasp_pos = action['pos']
+
+        # Move up.
+        final_pos = grasp_pos.copy()
+        final_pos[2] += 0.4
+        self.bhand.move(final_pos, action['quat'], duration=.1)
+
+        # Check grasp stability.
+        self.bhand.move(final_pos, action['quat'], duration=0.5)
+        stable_grasp, num_contacts = self.bhand.is_grasp_stable()
+
+        # Filter stable grasps. Keep the ones that created space around the grasped object.
+        if stable_grasp:
+            # print('diffs:', diffs)
+            for obj in self.objects:
+                pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
+
+                if pos[2] > 0.2 and diffs[obj_id] > 0.015:
+                    stable_grasp = True
+                    break
+                else:
+                    stable_grasp = False
+
+        # Move home
+        self.bhand.move(self.bhand.home_position, action['quat'], duration=.1)
+
+        # Open fingers
+        self.bhand.open()
+
+        return self.get_obs(), {'collision': is_in_contact,
+                                'stable': stable_grasp,
+                                'num_contacts': num_contacts}
+
+    def get_obs(self):
         """
-        Checks if the objects are still moving
+        Get observation.
         """
+        obs = {'color': [], 'depth': [], 'seg': [], 'full_state': []}
+
+        for cam in self.agent_cams:
+            color, depth, seg = cam.get_data()
+            obs['color'] += (color,)
+            obs['depth'] += (depth,)
+            obs['seg'] += (seg,)
+
+        # Update position and orientation
         for obj in self.objects:
-
             pos, quat = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
-            if pos[2] < 0:
-                continue
+            obj.pos, obj.quat = self.workspace2world(pos=np.array(pos),
+                                                     quat=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]),
+                                                     inv=True)
+        obs['full_state'] = self.objects
 
-            vel, rot_vel = p.getBaseVelocity(bodyUniqueId=obj.body_id)
-            norm_1 = np.linalg.norm(vel)
-            norm_2 = np.linalg.norm(rot_vel)
-            if norm_1 > 0.001 or norm_2 > 0.1:
-                return True
-        return False
+        return obs
+
+    def remove_flats(self):
+        non_flats = []
+        for obj in self.objects:
+            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
+
+            rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
+            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
+
+            if obj_pos[2] < 0 or np.abs(angle_z) > 0.1:
+                p.removeBody(obj.body_id)
+                continue
+            non_flats.append(obj)
+
+        self.objects = non_flats
 
     def hug(self, force_magnitude=10, duration=2000):
         """
@@ -669,136 +740,22 @@ class Environment:
                                                      quat=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]),
                                                      inv=True)
 
-    def seed(self, seed):
-        self._random = np.random.RandomState(seed)
-        self.scene_generator.seed(seed)
-        return seed
-
-    def reset(self):
-
-        self.objects = []
-        p.resetSimulation()
-        p.setGravity(0, 0, -9.8)
-
-        # Temporarily disable rendering to load scene faster.
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
-
-        # Load UR5 robot arm equipped with Barrett hand.
-        # robot_id = pybullet_utils.load_urdf(p, UR5_URDF_PATH, flags=p.URDF_USE_SELF_COLLISION)
-        # self.robot = Ur5Bhand(robot_id=robot_id)
-        self.bhand = FloatingBHand('../assets/robot_hands/barrett/bh_282.urdf',
-                                   np.array([0.7, 0.0, 0.2]))
-
-        # Load plane and workspace.
-        pybullet_utils.load_urdf(p, PLANE_URDF_PATH, [0, 0, -0.7])
-        table_id = pybullet_utils.load_urdf(p, UR5_WORKSPACE_URDF_PATH, self.workspace_pos)
-        p.changeDynamics(table_id, -1, lateralFriction=0.1)
-
-        # Re-enable rendering.
-        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
-
-        # Generate a scene with randomly placed.
-        # self.scene_generator.reset(self)
-        self.add_objects()
-
-        self.remove_flats()
-
-        # Pack objects.
-        self.hug(force_magnitude=1)
-
-        for t in range(3000):
-            p.stepSimulation()
-
-        while self.is_static():
-            time.sleep(0.001)
-            p.stepSimulation()
-
-        return self.get_obs()
-
-    def step(self, action):
-        # Move to pre-grasp position.
-        pre_grasp_pos = action['pos'].copy()
-        pre_grasp_pos[2] += 0.3
-        self.bhand.move(pre_grasp_pos, action['quat'], duration=0.1)
-
-        # Set finger configuration.
-        theta = action['aperture']
-        self.bhand.move_fingers([0.0, theta, theta, theta], duration=.1, force=5)
-
-        is_in_contact = self.bhand.move(action['pos'], action['quat'], duration=.5, stop_at_contact=True)
-
-        if not is_in_contact:
-            # Push the hand forward.
-            rot = action['quat'].rotation_matrix()
-            grasp_pos = action['pos'] + rot[0:3, 2] * action['push_distance']
-            self.bhand.move(grasp_pos, action['quat'], duration=2)
-
-            # Close the fingers.
-            self.bhand.close()
-        else:
-            grasp_pos = action['pos']
-
-        # Move up.
-        final_pos = grasp_pos.copy()
-        final_pos[2] += 0.3
-        self.bhand.move(final_pos, action['quat'], duration=.1)
-
-        # Check grasp stability.
-        self.bhand.move(final_pos, action['quat'], duration=0.5)
-        stable_grasp, num_contacts = self.bhand.is_grasp_stable()
-
-        # Move home
-        self.bhand.move(self.bhand.home_position, action['quat'], duration=.1)
-
-        # Open fingers
-        self.bhand.open()
-
-        return self.get_obs(), {'collision': is_in_contact,
-                                'stable': stable_grasp,
-                                'num_contacts': num_contacts}
-
-    def close(self):
-        p.disconnect()
-
-    def get_obs(self):
-        obs = {'color': [], 'depth': [], 'seg': [], 'full_state': []}
-
-        for cam in self.agent_cams:
-            color, depth, seg = cam.get_data()
-            obs['color'] += (color,)
-            obs['depth'] += (depth,)
-            obs['seg'] += (seg,)
-
-        # Update position and orientation
+    def is_static(self):
+        """
+        Checks if the objects are still moving
+        """
         for obj in self.objects:
+
             pos, quat = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
-            obj.pos, obj.quat = self.workspace2world(pos=np.array(pos),
-                                                     quat=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]),
-                                                     inv=True)
-        obs['full_state'] = self.objects
-
-        return obs
-
-    def remove_flats(self):
-        is_terminal = True
-
-        tmp_objects = []
-        for obj in self.objects:
-            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
-
-            rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
-            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
-
-            if obj_pos[2] < 0 or np.abs(angle_z) > 0.1:
-                p.removeBody(obj.body_id)
+            if pos[2] < 0:
                 continue
-            tmp_objects.append(obj)
 
-        self.objects = tmp_objects
+            vel, rot_vel = p.getBaseVelocity(bodyUniqueId=obj.body_id)
+            norm_1 = np.linalg.norm(vel)
+            norm_2 = np.linalg.norm(rot_vel)
+            if norm_1 > 0.001 or norm_2 > 0.1:
+                return True
+        return False
 
-    def get_state_id(self):
-        return p.saveState()
 
-    def restore_state(self, state_id):
-        p.restoreState(stateId=state_id)
 
