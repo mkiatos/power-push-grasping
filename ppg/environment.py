@@ -46,49 +46,6 @@ class Object:
         self.body_id = body_id
 
 
-class SceneGenerator:
-    def __init__(self,
-                 assets_root,
-                 nr_objects,
-                 bounds):
-        self.nr_objects = nr_objects
-        self.bounds = bounds
-        self.rng = np.random.RandomState()
-
-        self.obj_files = []
-        for obj_file in os.listdir(os.path.join(assets_root, 'objects/obj')):
-            if not obj_file.endswith('.obj'):
-                continue
-            self.obj_files.append(os.path.join(assets_root, 'objects/obj', obj_file))
-
-    def seed(self, seed):
-        self.rng.seed(seed)
-
-    def reset(self, env):
-        # Random number of objects.
-        nr_objects = self.rng.randint(low=self.nr_objects[0], high=self.nr_objects[1])
-
-        # Sample n objects from the database.
-        random_objects = self.rng.choice(self.obj_files, nr_objects)
-
-        for i in range(nr_objects):
-            # Randomize position.
-            x = self.rng.uniform(self.bounds[0][0], self.bounds[0][1])
-            y = self.rng.uniform(self.bounds[1][0], self.bounds[1][1])
-
-            # Randomize orientation (around z axis).
-            angle = self.rng.uniform(0, np.pi)
-            axis = self.rng.random(3)
-            axis /= np.linalg.norm(axis)
-            rot = angle_axis2rot(angle, axis)
-            rot = np.eye(3)
-
-            obj = env.add_object(obj_path=random_objects[i],
-                                 pos=np.array([x, y, 0.1]),
-                                 quat=Quaternion.from_rotation_matrix(rot))
-            env.objects.append(obj)
-
-
 class FloatingGripper:
     """
     A mouving mount and a gripper. The mount has 4 joints:
