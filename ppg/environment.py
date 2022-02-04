@@ -657,6 +657,10 @@ class Environment:
         return self.get_obs()
 
     def step(self, action):
+        self.remove_flats()
+
+        prev_flats, prev_non_flats = self.get_flat_objects()
+
         # Move to pre-grasp position.
         pre_grasp_pos = action['pos'].copy()
         pre_grasp_pos[2] += 0.3
@@ -671,6 +675,7 @@ class Environment:
         # Check if during reaching the pre-grasp position, the hand collides with some object.
         if not is_in_contact:
 
+            # Compute distances of each object from all other objects
             obs = self.get_obs()
             dists = pybullet_utils.get_distances_from_target(obs)
 
@@ -681,10 +686,13 @@ class Environment:
 
             next_obs = self.get_obs()
             next_dists = pybullet_utils.get_distances_from_target(next_obs)
-
+            print(len(dists), len(next_dists))
             diffs = {}
             for obj_id in dists:
-                diffs[obj_id] = np.array(next_dists[obj_id] - dists[obj_id])
+                if obj_id in next_dists and obj_id in dists:
+                    diffs[obj_id] = next_dists[obj_id] - dists[obj_id]
+
+            flats, non_flats = self.get_flat_objects()
 
             # Close the fingers.
             self.bhand.close()
@@ -700,17 +708,22 @@ class Environment:
         self.bhand.move(final_pos, action['quat'], duration=0.5)
         stable_grasp, num_contacts = self.bhand.is_grasp_stable()
 
-        # Filter stable grasps. Keep the ones that created space around the grasped object.
+        # Check the validity of the grasp.
         if stable_grasp:
-            # print('diffs:', diffs)
-            for obj in self.objects:
-                pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
-
-                if pos[2] > 0.2 and diffs[obj_id] > 0.015:
-                    stable_grasp = True
-                    break
-                else:
-                    stable_grasp = False
+            print('Non_flats:', prev_non_flats, non_flats)
+            if non_flats < prev_non_flats or prev_flats < flats:
+                label = False
+            else:
+                # Filter stable grasps. Keep the ones that created space around the grasped object.
+                for obj in self.objects:
+                    pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
+                    if pos[2] > 0.25 and diffs[obj.body_id] > 0.015:
+                        label = True
+                        break
+                    else:
+                        label = False
+        else:
+            label = False
 
         # Move home
         self.bhand.move(self.bhand.home_position, action['quat'], duration=.1)
@@ -719,7 +732,7 @@ class Environment:
         self.bhand.open()
 
         return self.get_obs(), {'collision': is_in_contact,
-                                'stable': stable_grasp,
+                                'stable': label,
                                 'num_contacts': num_contacts}
 
     def get_obs(self):
@@ -735,11 +748,16 @@ class Environment:
             obs['seg'] += (seg,)
 
         # Update position and orientation
+        tmp_objects = []
         for obj in self.objects:
             pos, quat = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
             obj.pos, obj.quat = self.workspace2world(pos=np.array(pos),
                                                      quat=Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3]),
                                                      inv=True)
+            if obj.pos[2] > 0:
+                tmp_objects.append(obj)
+
+        self.objects = tmp_objects
         obs['full_state'] = self.objects
 
         return obs
@@ -805,5 +823,21 @@ class Environment:
                 return True
         return False
 
+    def get_flat_objects(self):
+        flats = 0
+        non_flats = 0
+        for obj in self.objects:
+            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
 
+            rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
+            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
 
+            if obj_pos[2] < 0:
+                continue
+
+            if np.abs(angle_z) > 0.1:
+                flats += 1
+            else:
+                non_flats += 1
+
+        return flats, non_flats
