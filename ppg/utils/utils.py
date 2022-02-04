@@ -178,7 +178,8 @@ class Logger:
 
         # Create the log directory
         if os.path.exists(log_dir):
-            answer = input('Directory ', log_dir, 'exists, do you want to remove it permanently? (y/n)')
+            print('Directory ', log_dir, 'exists, do you want to remove it? (y/n)')
+            answer = input('')
             if answer == 'y':
                 shutil.rmtree(log_dir)
                 os.mkdir(log_dir)
