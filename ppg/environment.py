@@ -653,6 +653,8 @@ class Environment:
         # Pack objects.
         self.hug(force_magnitude=1)
 
+        self.remove_flats()
+
         while self.is_static():
             time.sleep(0.001)
             self.simulation.step()
@@ -660,8 +662,6 @@ class Environment:
         return self.get_obs()
 
     def step(self, action):
-        self.remove_flats()
-
         prev_flats, prev_non_flats = self.get_flat_objects()
 
         # Move to pre-grasp position.
@@ -695,10 +695,11 @@ class Environment:
                 if obj_id in next_dists and obj_id in dists:
                     diffs[obj_id] = next_dists[obj_id] - dists[obj_id]
 
-            flats, non_flats = self.get_flat_objects()
-
             # Close the fingers.
             self.bhand.close()
+
+            flats, non_flats = self.get_flat_objects()
+
         else:
             grasp_pos = action['pos']
 
