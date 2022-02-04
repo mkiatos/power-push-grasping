@@ -15,7 +15,7 @@ from sklearn.linear_model import LinearRegression
 
 from ppg.utils import orientation as ori
 from ppg.utils import utils
-from ppg.utils.memory import ReplayBuffer
+from ppg.utils.memory import ReplayBuffer, PrioritizedReplayBuffer
 from ppg.models import ResFCN, Classifier, Regressor
 from ppg import cameras
 
@@ -64,7 +64,6 @@ class Policy:
     def terminal(self, obs, next_obs):
         objects = next_obs['full_state']
 
-        is_terminal = True
         for obj in objects:
             obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
             if obj_pos[2] < 0:
@@ -74,9 +73,9 @@ class Policy:
             rot_mat = ori.Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
             angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
             if np.abs(angle_z) < 0.1:
-                is_terminal = False
+                return False
 
-        return is_terminal
+        return False
 
 
 class PushGrasping2:
@@ -456,7 +455,7 @@ class PushGrasping(Policy):
         self.bounds = np.array(params['env']['workspace']['bounds'])
 
         self.crop_size = 32
-        self.push_distance = 0.1
+        self.push_distance = 0.15
         self.z = 0.1
 
         self.fcn = ResFCN().to('cuda')
@@ -468,10 +467,13 @@ class PushGrasping(Policy):
         self.reg_optimizer = optim.Adam(self.reg.parameters(), lr=params['agent']['regressor']['learning_rate'])
         self.reg_criterion = nn.L1Loss()
 
-        self.replay_buffer = ReplayBuffer(log_dir=params['log_dir'])
+        if self.params['agent']['per']:
+            self.replay_buffer = PrioritizedReplayBuffer(log_dir=params['log_dir'])
+        else:
+            self.replay_buffer = ReplayBuffer(log_dir=params['log_dir'])
 
         self.learn_step_counter = 0
-        self.info = {'fcn_loss': [], 'reg_loss': []}
+        self.info = {'fcn_loss': [], 'reg_loss': [], 'learn_step_counter': 0}
 
         os.mkdir(os.path.join(params['log_dir'], 'maps'))
         np.set_printoptions(formatter={'float': lambda x: "{0:0.2f}".format(x)})
@@ -580,8 +582,13 @@ class PushGrasping(Policy):
         cropped_map = (cropped_map - image_mean) / image_std
         cropped_map = np.expand_dims(cropped_map, axis=0)
 
+        three_channel_img = np.zeros((3, cropped_map.shape[1], cropped_map.shape[2]))
+        three_channel_img[0] = cropped_map
+        three_channel_img[1] = cropped_map
+        three_channel_img[2] = cropped_map
+
         p1 -= padding_width
-        return cropped_map
+        return three_channel_img
 
     def random_sample(self, state):
         action = np.zeros((4,))
@@ -591,7 +598,7 @@ class PushGrasping(Policy):
         action[3] = self.rng.uniform(self.aperture_limits[0], self.aperture_limits[1])
         return action
 
-    def guided_exploration(self, state, sample_limits=[0.08, 0.15]):
+    def guided_exploration(self, state, sample_limits=[0.1, 0.15]):
         obj_ids = np.argwhere(state > self.z)
 
         # Sample initial position.
@@ -616,7 +623,7 @@ class PushGrasping(Policy):
         contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
         while True:
-            pxl = valid_pxls[random.choice(valid_ids)]
+            pxl = valid_pxls[self.rng.choice(valid_ids, 1)[0]]
             p1 = np.array([pxl[1], pxl[0]])
 
             # Sample pushing direction. Push directions point always towards the objects.
@@ -631,7 +638,9 @@ class PushGrasping(Policy):
             if len(points) > 0:
                 break
 
-        p2 = random.choice(points)
+        ids = np.arange(len(points))
+        random_id = self.rng.choice(ids, 1)[0]
+        p2 = points[random_id]
         push_dir = p2 - p1
         theta = -np.arctan2(push_dir[1], push_dir[0])
         step_angle = 2 * np.pi / self.rotations
@@ -661,22 +670,18 @@ class PushGrasping(Policy):
 
     def explore(self, state):
         explore_prob = max(0.8 * np.power(0.9998, self.learn_step_counter), 0.1)
-        print('explore_prob:', explore_prob)
 
         if self.rng.rand() < explore_prob:
             action = self.guided_exploration(state)
         else:
             action = self.predict(state)
-        print('--------')
-        print('Explore')
-        print('action:', action)
-        print('--------')
+        print('explore action:', action)
         return action
 
     def predict(self, state):
 
         # Find optimal position and orientation
-        x = torch.FloatTensor(self.pre_process(state)).unsqueeze(0).to('cuda')
+        x = torch.FloatTensor(self.pre_process(state)). unsqueeze(0).to('cuda')
         out_prob = self.fcn(x, is_volatile=True)
         out_prob = self.post_process(out_prob)
 
@@ -698,6 +703,7 @@ class PushGrasping(Policy):
 
         # Find optimal aperture
         aperture_img = self.pre_process_aperture_img(state, p1, theta)
+
         x = torch.FloatTensor(aperture_img).unsqueeze(0).to('cuda')
         aperture = self.reg(x).detach().cpu().numpy()[0, 0]
         # print('aperture', aperture.detach().cpu().numpy()[0, 0])
@@ -712,10 +718,7 @@ class PushGrasping(Policy):
         action[1] = p1[1]
         action[2] = theta
         action[3] = aperture
-        print('--------')
-        print('Predict')
-        print('action:', action)
-        print('--------')
+        print('Predicted action:', action)
         return action
 
     def get_fcn_labels(self, state, action):
@@ -733,56 +736,134 @@ class PushGrasping(Policy):
         return heightmap, rot_id, label
 
     def learn(self, transition):
+        if not transition['label']:
+            return
+
+        self.replay_buffer.store(transition)
+
+        # if self.replay_buffer.size() < 64:
+        #     return
+
+        # Sample from replay buffer
+        state, action = self.replay_buffer.sample()
+
+        # Update FCN
+        heightmap, rot_id, label = self.get_fcn_labels(state, action)
+        x = torch.FloatTensor(heightmap).unsqueeze(0).to('cuda')
+        label = torch.FloatTensor(label).unsqueeze(0).to('cuda')
+        rotations = np.array([rot_id])
+        q_maps = self.fcn(x, specific_rotation=rotations)
+
+        # Compute loss in the whole scene
+        loss = self.fcn_criterion(q_maps, label)
+        loss = torch.sum(loss)
+        print('fcn_loss:', loss.detach().cpu().numpy())
+        self.info['fcn_loss'].append(loss.detach().cpu().numpy())
+
+        self.fcn_optimizer.zero_grad()
+        loss.backward()
+        self.fcn_optimizer.step()
+
+        # Update regression network
+        x = torch.FloatTensor(self.pre_process_aperture_img(state,
+                                                            p1=np.array([action[0], action[1]]),
+                                                            theta=action[2])).unsqueeze(0).to('cuda')
+        # Normalize aperture to range 0-1
+        normalized_aperture = utils.min_max_scale(action[3],
+                                                  range=[self.aperture_limits[0], self.aperture_limits[1]],
+                                                  target_range=[0, 1])
+        gt_aperture = torch.FloatTensor(np.array([normalized_aperture])).unsqueeze(0).to('cuda')
+        pred_aperture = self.reg(x)
+
+        print('APERTURES')
+        print(gt_aperture, pred_aperture)
+
+        loss = self.reg_criterion(pred_aperture, gt_aperture)
+        print('reg_loss:', loss.detach().cpu().numpy())
+        self.info['reg_loss'].append(loss.detach().cpu().numpy())
+
+        self.reg_optimizer.zero_grad()
+        loss.backward()
+        self.reg_optimizer.step()
+
+        self.learn_step_counter += 1
+
+    def learn2(self, transition):
+
         # Store state and label to replay buffer
         if transition['label']:
             self.replay_buffer.store(transition)
+        return
 
-            # if self.replay_buffer.size() < 50:
-            #     return
+        # if self.params['agent']['per']:
+        #         x = torch.FloatTensor(self.pre_process_aperture_img(transition['state'],
+        #                                                             p1=np.array([transition['action'][0],
+        #                                                                          transition['action'][1]]),
+        #                                                             theta=transition['action'][2])).unsqueeze(0).to('cuda')
+        #         # Normalize aperture to range 0-1
+        #         normalized_aperture = utils.min_max_scale(transition['action'][3],
+        #                                                   range=[self.aperture_limits[0], self.aperture_limits[1]],
+        #                                                   target_range=[0, 1])
+        #         gt_aperture = torch.FloatTensor(np.array([normalized_aperture])).unsqueeze(0).to('cuda')
+        #         pred_aperture = self.reg(x)
+        #         error = self.reg_criterion(pred_aperture, gt_aperture).detach().cpu().numpy()
+        #         self.replay_buffer.store(error, transition)
+        #     else:
+        #         self.replay_buffer.store(transition)
+        #
+        #     # if self.replay_buffer.size() < 64:
+        #     #     return
+        #
+        #     # Sample from replay buffer
+        #     # state, action = self.replay_buffer.sample()
+        #     state, action, sample_id = self.replay_buffer.sample()
+        #
+        #     # Update FCN
+        #     heightmap, rot_id, label = self.get_fcn_labels(state, action)
+        #     x = torch.FloatTensor(heightmap).unsqueeze(0).to('cuda')
+        #     label = torch.FloatTensor(label).unsqueeze(0).to('cuda')
+        #     rotations = np.array([rot_id])
+        #     q_maps = self.fcn(x, specific_rotation=rotations)
+        #
+        #     # Compute loss in the whole scene
+        #     loss = self.fcn_criterion(q_maps, label)
+        #     loss = torch.sum(loss)
+        #     print('fcn_loss:', loss.detach().cpu().numpy())
+        #     self.info['fcn_loss'].append(loss.detach().cpu().numpy())
+        #
+        #     self.fcn_optimizer.zero_grad()
+        #     loss.backward()
+        #     self.fcn_optimizer.step()
+        #
+        #     # Update regression network
+        #     x = torch.FloatTensor(self.pre_process_aperture_img(state,
+        #                                                         p1=np.array([action[0], action[1]]),
+        #                                                         theta=action[2])).unsqueeze(0).to('cuda')
+        #     # Normalize aperture to range 0-1
+        #     normalized_aperture = utils.min_max_scale(action[3],
+        #                                               range=[self.aperture_limits[0], self.aperture_limits[1]],
+        #                                               target_range=[0, 1])
+        #     gt_aperture = torch.FloatTensor(np.array([normalized_aperture])).unsqueeze(0).to('cuda')
+        #     pred_aperture = self.reg(x)
+        #
+        #     print('APERTURES')
+        #     print(gt_aperture, pred_aperture)
+        #
+        #     loss = self.reg_criterion(pred_aperture, gt_aperture)
+        #     print('reg_loss:', loss.detach().cpu().numpy())
+        #     self.info['reg_loss'].append(loss.detach().cpu().numpy())
+        #
+        #     self.reg_optimizer.zero_grad()
+        #     loss.backward()
+        #     self.reg_optimizer.step()
+        #
+        #     self.learn_step_counter += 1
+        #
+        #     # Update priorities
+        #     self.replay_buffer.update_priorities(sample_id, loss.detach().cpu().numpy())
 
-            # Sample from replay buffer
-            state, action = self.replay_buffer.sample()
-
-            # Update FCN
-            heightmap, rot_id, label = self.get_fcn_labels(state, action)
-            x = torch.FloatTensor(heightmap).unsqueeze(0).to('cuda')
-            label = torch.FloatTensor(label).unsqueeze(0).to('cuda')
-            rotations = np.array([rot_id])
-            q_maps = self.fcn(x, specific_rotation=rotations)
-
-            # Compute loss in the whole scene
-            loss = self.fcn_criterion(q_maps, label)
-            loss = torch.sum(loss)
-            print('fcn_loss:', loss.detach().cpu().numpy())
-            self.info['fcn_loss'].append(loss.detach().cpu().numpy())
-
-            self.fcn_optimizer.zero_grad()
-            loss.backward()
-            self.fcn_optimizer.step()
-
-            # Update regression network
-            x = torch.FloatTensor(self.pre_process_aperture_img(state,
-                                                                p1=np.array([action[0], action[1]]),
-                                                                theta=action[2])).unsqueeze(0).to('cuda')
-            # Normalize aperture to range 0-1
-            normalized_aperture = utils.min_max_scale(action[3],
-                                                      range=[self.aperture_limits[0], self.aperture_limits[1]],
-                                                      target_range=[0, 1])
-            gt_aperture = torch.FloatTensor(np.array([normalized_aperture])).unsqueeze(0).to('cuda')
-            pred_aperture = self.reg(x)
-
-            print('APERTURES')
-            print(gt_aperture, pred_aperture)
-
-            loss = self.reg_criterion(pred_aperture, gt_aperture)
-            print('reg_loss:', loss.detach().cpu().numpy())
-            self.info['reg_loss'].append(loss.detach().cpu().numpy())
-
-            self.reg_optimizer.zero_grad()
-            loss.backward()
-            self.reg_optimizer.step()
-
-            self.learn_step_counter += 1
+            # aperture_error =
+            # self.replay_buffer.store()
 
     def action(self, action):
         # Convert from pixels to 3d coordinates.
@@ -834,6 +915,50 @@ class PushGrasping(Policy):
         torch.save(self.fcn.state_dict(), os.path.join(folder_name, 'fcn.pt'))
         torch.save(self.reg.state_dict(), os.path.join(folder_name, 'reg.pt'))
 
-    def load(self, log_dir):
+        log_data = {'params': self.params.copy()}
+        pickle.dump(log_data, open(os.path.join(folder_name, 'log_data'), 'wb'))
+
+        self.info['learn_step_counter'] = self.learn_step_counter
+        pickle.dump(self.info, open(os.path.join(folder_name, 'info'), 'wb'))
+
+    @ classmethod
+    def load(cls, log_dir):
+        params = pickle.load(open(os.path.join(log_dir, 'log_data'), 'rb'))
+        self = cls(params)
+
         self.fcn.load_state_dict(torch.load(os.path.join(log_dir, 'fcn.pt')))
+        self.fcn.eval()
+
         self.reg.load_state_dict(torch.load(os.path.join(log_dir, 'reg.pt')))
+        self.reg.eval()
+
+        return self
+
+    def load_seperately(self, fcn_model, reg_model):
+        self.fcn.load_state_dict(torch.load(fcn_model))
+        self.fcn.eval()
+
+        self.reg.load_state_dict(torch.load(reg_model))
+        self.reg.eval()
+
+    def resume_training(self, log_dir):
+        # First, you have to call the function load...!
+        self.info = pickle.load(open(os.path.join(log_dir, 'info'), 'rb'))
+        self.learn_step_counter = self.info['learn_step_counter']
+
+    def terminal(self, obs, next_obs):
+        # Check if there are only flat objects in the scene
+        state = self.state_representation(next_obs)
+        obj_ids = np.argwhere(state > self.z)
+        if len(obj_ids) == 0:
+            return True
+
+        # Check if there is only one object in the scene
+        objects_above = 0
+        for obj in next_obs['full_state']:
+            if obj.pos[2] > 0:
+                objects_above += 1
+        if objects_above == 1:
+            return True
+
+        return super(PushGrasping, self).terminal(obs, next_obs)
