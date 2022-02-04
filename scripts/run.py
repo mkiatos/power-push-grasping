@@ -203,6 +203,34 @@ def analyze(log_dir):
     print('---------------------------------------------------------------------------------------')
 
 
+def analyze_replay_buffer(replay_buffer_dir):
+    transition_dirs = next(os.walk(replay_buffer_dir))[1]
+
+    apertures = []
+    for transition_dir in transition_dirs:
+        action = pickle.load(open(os.path.join(replay_buffer_dir, transition_dir, 'action'), 'rb'))
+        apertures.append(action[3])
+
+    bins = 5
+    limits = [0.6, 1.1]
+    step = (limits[1] - limits[0]) / bins
+    discrete_apertures = np.zeros((bins, ))
+    for i in range(bins):
+        discrete_apertures[i] = i * step
+
+    heights = np.zeros((bins, ))
+    for aperture in apertures:
+        # find the bin
+        # print(aperture, step)
+        bin_id = int((aperture - limits[0]) / step)
+        # print(bin_id)
+        heights[bin_id] += 1
+
+    heights /= len(apertures)
+
+    plt.bar(discrete_apertures, heights, width=0.5)
+    plt.show()
+
 if __name__ == "__main__":
 
     # params = {'dataset_dir': '../logs/dataset_no_flats',
