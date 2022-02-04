@@ -947,18 +947,20 @@ class PushGrasping(Policy):
         self.learn_step_counter = self.info['learn_step_counter']
 
     def terminal(self, obs, next_obs):
-        # Check if there are only flat objects in the scene
-        state = self.state_representation(next_obs)
-        obj_ids = np.argwhere(state > self.z)
-        if len(obj_ids) == 0:
-            return True
 
         # Check if there is only one object in the scene
         objects_above = 0
+
         for obj in next_obs['full_state']:
             if obj.pos[2] > 0:
-                objects_above += 1
-        if objects_above == 1:
-            return True
 
-        return super(PushGrasping, self).terminal(obs, next_obs)
+                # Check if there is at least one object in the scene with the axis parallel to world z.
+                rot_mat = obj.quat.rotation_matrix()
+                angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
+                if np.abs(angle_z) < 0.1:
+                    objects_above += 1
+                else:
+                    return True
+
+        if objects_above <= 1:
+            return True
