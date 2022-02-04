@@ -16,6 +16,45 @@ UR5_WORKSPACE_URDF_PATH = 'table/table.urdf'
 PLANE_URDF_PATH = "plane/plane.urdf"
 
 
+class Simulation:
+    def __init__(self, objects):
+        self.names_button = NamesButton('Show names')
+        self.objects = objects
+
+    def step(self):
+        p.stepSimulation()
+        self.names_button.show_names(self.objects)
+
+
+class Button:
+    def __init__(self, title):
+        self.id = p.addUserDebugParameter(title, 1, 0, 1)
+        self.counter = p.readUserDebugParameter(self.id)
+        self.counter_prev = self.counter
+
+    def on(self):
+        self.counter = p.readUserDebugParameter(self.id)
+        if self.counter % 2 == 0:
+            return True
+        return False
+
+
+class NamesButton(Button):
+    def __init__(self, title):
+        super(NamesButton, self).__init__(title)
+        self.ids = []
+
+    def show_names(self, objects):
+        if self.on() and len(self.ids) == 0:
+            for obj in objects:
+                self.ids.append(p.addUserDebugText(text=str(obj.body_id), textPosition=[0, 0, 2 * obj.size[2]], parentObjectUniqueId=obj.body_id))
+
+        if not self.on():
+            for i in self.ids:
+                p.removeUserDebugItem(i)
+            self.ids = []
+
+
 class Object:
     def __init__(self,
                  name='',
@@ -59,7 +98,9 @@ class FloatingGripper:
                  robot_hand_urdf,
                  home_position,
                  pos_offset,
-                 orn_offset):
+                 orn_offset,
+                 simulation
+                 ):
         self.home_position = home_position
         self.mount_urdf = '../assets/mount.urdf'
 
@@ -82,6 +123,8 @@ class FloatingGripper:
 
         # Mount joints.
         self.joint_ids = [0, 1, 2, 3]
+
+        self.simulation = simulation
 
     def generate_mounted_urdf(self,
                               robot_hand_urdf,
@@ -184,7 +227,7 @@ class FloatingGripper:
                     break
 
             t += dt
-            p.stepSimulation()
+            self.simulation.step()
             time.sleep(dt)
 
         return is_in_contact
@@ -202,13 +245,15 @@ class FloatingGripper:
 class FloatingBHand(FloatingGripper):
     def __init__(self,
                  bhand_urdf,
-                 home_position):
+                 home_position,
+                 simulation):
 
         # Define the mount link position w.r.t. hand base link.
         pos_offset = np.array([0.0, 0, -0.065])
         orn_offset = p.getQuaternionFromEuler([0, 0.0, 0.0])
 
-        super(FloatingBHand, self).__init__(bhand_urdf, home_position, pos_offset, orn_offset)
+        super(FloatingBHand, self).__init__(bhand_urdf, home_position, pos_offset, orn_offset,
+                                            simulation=simulation)
 
         pose = pybullet_utils.get_link_pose('mount_link')
         pybullet_utils.draw_pose(pose[0], pose[1])
@@ -302,7 +347,7 @@ class FloatingBHand(FloatingGripper):
             )
 
             t += dt
-            p.stepSimulation()
+            self.simulation.step()
             time.sleep(dt)
 
     def step_constraints(self):
@@ -470,7 +515,7 @@ class Environment:
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         p.setTimeStep(1.0 / hz)
 
-        np.set_printoptions(formatter={'float': lambda x: "{0:0.3f}".format(x)})
+        self.simulation = Simulation(self.objects)
 
     def seed(self, seed):
         self.rng.seed(seed)
@@ -582,7 +627,8 @@ class Environment:
 
         # Load UR5 robot arm equipped with Barrett hand.
         self.bhand = FloatingBHand('../assets/robot_hands/barrett/bh_282.urdf',
-                                   home_position=np.array([0.7, 0.0, 0.2]))
+                                   home_position=np.array([0.7, 0.0, 0.2]),
+                                   simulation=self.simulation)
 
         # Load plane and workspace.
         pybullet_utils.load_urdf(p, PLANE_URDF_PATH, [0, 0, -0.7])
@@ -596,6 +642,8 @@ class Environment:
         self.objects = []
         self.add_objects()
 
+        self.simulation.objects = self.objects
+
         # Remove flat objects.
         self.remove_flats()
 
@@ -604,7 +652,7 @@ class Environment:
 
         while self.is_static():
             time.sleep(0.001)
-            p.stepSimulation()
+            self.simulation.step()
 
         return self.get_obs()
 
