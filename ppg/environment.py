@@ -477,6 +477,8 @@ class Environment:
         self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])  # workspace limits
         self.assets_root = assets_root
         self.workspace_pos = np.array(workspace_pos)
+        self.disp = disp
+        self.nr_objects = [5, 7]
 
         # Setup cameras.
         self.agent_cams = []
@@ -552,7 +554,7 @@ class Environment:
 
         return world_pos, world_quat
 
-    def add_single_object(self, obj_path, pos, quat):
+    def add_single_object(self, obj_path, pos, quat, size):
         """
         Adds an object in the scene
         """
@@ -564,6 +566,7 @@ class Environment:
         return Object(name=obj_path.split('/')[-1].split('.')[0],
                       pos=base_position,
                       quat=base_orientation,
+                      size=size,
                       body_id=body_id)
 
     def add_objects(self):
@@ -578,7 +581,7 @@ class Environment:
             return np.array([x, y, z])
 
         # Sample n objects from the database.
-        nr_objects = self.rng.randint(low=5, high=7)
+        nr_objects = self.rng.randint(low=self.nr_objects[0], high=self.nr_objects[1])
         obj_paths = self.rng.choice(self.obj_files, nr_objects)
 
         for i in range(len(obj_paths)):
@@ -615,7 +618,7 @@ class Environment:
 
             p.removeBody(body_id)
 
-            self.objects.append(self.add_single_object(obj_paths[i], pos, quat))
+            self.objects.append(self.add_single_object(obj_paths[i], pos, quat, size))
 
     def reset(self):
         # Reset simulation.
