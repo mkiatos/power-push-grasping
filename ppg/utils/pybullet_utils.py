@@ -187,12 +187,13 @@ def get_distances_from_target(obs):
             if obj.pos[2] < 0 or target.body_id == obj.body_id:
                 continue
 
-            points = p.getClosestPoints(target.body_id, obj.body_id, distance=0.1)
+            points = p.getClosestPoints(target.body_id, obj.body_id, distance=10)
             if len(points) > 0:
                 dist = np.linalg.norm(np.array(points[0][5]) - np.array(points[0][6]))
                 distances[target.body_id].append(dist)
 
     for obj_id in distances:
-        distances[obj_id] = np.min(distances[obj_id])
+        if len(distances[obj_id]) != 0:
+            distances[obj_id] = np.min(distances[obj_id])
 
     return distances
