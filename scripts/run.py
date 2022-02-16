@@ -201,15 +201,15 @@ def analyze(log_dir):
     attempts = 0
     objects_removed = 0
     for episode_data in eval_data:
+        print(episode_data)
         success_rate += episode_data['successes']
-        attempts += episode_data['attempts']
-        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'])
+        attempts += episode_data['attempts'] - episode_data['collisions']
+        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
 
     print('---------------------------------------------------------------------------------------')
-    print(tabulate([['Heuristic', success_rate / len(eval_data),
-                                  attempts / len(eval_data),
+    print(tabulate([['Heuristic', success_rate / attempts,
                                   objects_removed / len(eval_data)]],
-                   headers=['Policy', 'Grasp success', 'Grasp attempts', 'Scene clearance']))
+                   headers=['Policy', 'Grasp success', 'Scene clearance']))
     print('---------------------------------------------------------------------------------------')
 
 
