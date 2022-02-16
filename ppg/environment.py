@@ -768,7 +768,7 @@ class Environment:
             if obj.pos[2] > 0:
                 tmp_objects.append(obj)
 
-        self.objects = tmp_objects
+        self.objects = tmp_objects.copy()
         obs['full_state'] = self.objects
 
         return obs
