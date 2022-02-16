@@ -242,6 +242,33 @@ def analyze_replay_buffer(replay_buffer_dir):
     plt.show()
 
 
+def merge_folders(logs, out_dir):
+    if os.path.exists(out_dir):
+        answer = input('Remove the folder ' + out_dir + ' permarntly? (y/n)')
+        if answer:
+            shutil.rmtree(out_dir)
+        else:
+            exit()
+    os.mkdir(out_dir)
+
+    def copy_sub_folders(in_dir, out_dir, counter=0):
+        print(in_dir)
+        counter = len(next(os.walk(out_dir))[1])
+        print(counter)
+
+        sub_folders = next(os.walk(in_dir))[1]
+        for sub_folder in sub_folders:
+            id = int(sub_folder.split('_')[-1])
+            src = os.path.join(in_dir, sub_folder)
+            dst = os.path.join(out_dir, sub_folder.split('_')[0] + '_' + str(counter).zfill(5))
+            shutil.copytree(src, dst)
+            counter += 1
+
+    log_dirs = next(os.walk(logs))[1]
+    for log_dir in log_dirs:
+        copy_sub_folders(os.path.join(logs, log_dir, 'replay_buffer'), out_dir)
+
+
 if __name__ == "__main__":
 
     # params = {'dataset_dir': '../logs/train_self_supervised_per/replay_buffer',
