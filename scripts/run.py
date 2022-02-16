@@ -127,11 +127,19 @@ def eval_agent(n_scenes, log_path, seed=0):
     rng.seed(seed)
 
     eval_data = []
+    success_rate = 0
+    attempts = 0
+    objects_removed = 0
     for i in range(n_scenes):
-
+        print('Episode ', i)
         episode_seed = rng.randint(0, pow(2, 32) - 1)
         episode_data = run_episode(policy, env, episode_seed, train=False)
         eval_data.append(episode_data)
+
+        success_rate += episode_data['successes']
+        attempts += episode_data['attempts'] - episode_data['collisions']
+        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
+        print('Success_rate: {}, Scene Clearance: {}'.format(success_rate / attempts, objects_removed / len(eval_data)))
 
     pickle.dump(eval_data, open(os.path.join(log_path, 'eval_data'), 'wb'))
 
