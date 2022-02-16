@@ -689,11 +689,12 @@ class Environment:
 
             next_obs = self.get_obs()
             next_dists = pybullet_utils.get_distances_from_target(next_obs)
-            print(len(dists), len(next_dists))
-            if len(next_dists) == 1:
-                return self.get_obs(), {'collision': is_in_contact,
-                                        'stable': False,
-                                        'num_contacts': 0}
+
+            # if len(next_dists) == 1:
+            #     return self.get_obs(), {'collision': is_in_contact,
+            #                             'stable': False,
+            #                             'num_contacts': 0}
+
             diffs = {}
             for obj_id in dists:
                 if obj_id in next_dists and obj_id in dists:
