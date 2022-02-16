@@ -42,6 +42,9 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
         # Step environment.
         next_obs, grasp_info = env.step(env_action)
 
+        if grasp_info['collision']:
+            episode_data['collisions'] += 1
+
         episode_data['attempts'] += 1
         if grasp_info['stable']:
             episode_data['successes'] += 1
