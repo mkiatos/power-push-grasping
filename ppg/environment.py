@@ -739,6 +739,8 @@ class Environment:
         # Open fingers
         self.bhand.open()
 
+        self.remove_flats()
+
         return self.get_obs(), {'collision': is_in_contact,
                                 'stable': label,
                                 'num_contacts': num_contacts}
