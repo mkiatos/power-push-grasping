@@ -186,7 +186,7 @@ class Logger:
             else:
                 exit()
         else:
-            os.mkdir(log_dir)
+            os.makedirs(log_dir)
 
     def log_data(self, data, filename):
         pickle.dump(data, open(os.path.join(self.log_dir, filename), 'wb'))

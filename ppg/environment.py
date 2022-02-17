@@ -471,7 +471,7 @@ class Environment:
                  assets_root,
                  workspace_pos,
                  disp=True,
-                 hz=240):
+                 hz=240, obj_id=0):
 
         self.pxl_size = 0.005
         self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])  # workspace limits
@@ -492,10 +492,13 @@ class Environment:
 
         self.objects = []
         self.obj_files = []
-        for obj_file in os.listdir(os.path.join(assets_root, 'objects/obj')):
-            if not obj_file.endswith('.obj'):
-                continue
-            self.obj_files.append(os.path.join(assets_root, 'objects/obj', obj_file))
+        # for obj_file in os.listdir(os.path.join(assets_root, 'objects/single_' + str(obj_id))):
+        #     if not obj_file.endswith('.obj'):
+        #         continue
+        #     self.obj_files.append(os.path.join(assets_root, 'objects/single_' + str(obj_id)))
+
+        self.assets_root = assets_root
+        self.obj_id = obj_id
 
         self.rng = np.random.RandomState()
 
@@ -518,6 +521,7 @@ class Environment:
         p.setTimeStep(1.0 / hz)
 
         self.simulation = Simulation(self.objects)
+        self.nr_objects = None
 
     def seed(self, seed):
         self.rng.seed(seed)
@@ -581,10 +585,18 @@ class Environment:
             return np.array([x, y, z])
 
         # Sample n objects from the database.
-        nr_objects = self.rng.randint(low=self.nr_objects[0], high=self.nr_objects[1])
-        obj_paths = self.rng.choice(self.obj_files, nr_objects)
+        # nr_objects = self.rng.randint(low=self.nr_objects[0], high=self.nr_objects[1])
+        # self.nr_objects = self.rng.randint(2, 8)
+        pixels = [[(50, 50), (70, 50),],
+                  [(50, 50), (70, 50), (30, 50)],
+                  [(50, 50), (70, 50), (50, 30), (70, 30)],
+                  [(30, 50), (50, 50), (70, 50), (40, 30), (60, 30)],
+                  [(30, 50), (50, 50), (70, 50), (30, 30), (50, 30), (70, 30)],
+                  [(30, 50), (50, 50), (70, 50), (20, 30), (40, 30), (60, 30), (80, 30)]]
 
-        for i in range(len(obj_paths)):
+        obj_paths = self.rng.choice(self.obj_files, self.nr_objects)
+
+        for i in range(self.nr_objects):
             obj = Object()
             base_position, base_orientation = self.workspace2world(np.array([1.0, 1.0, 0.0]), Quaternion())
             body_id = pybullet_utils.load_obj(obj_path=obj_paths[i], scaling=1.0, position=base_position,
@@ -612,9 +624,11 @@ class Environment:
             # plt.plot(pix[0], pix[1], 'ro')
             # plt.show()
 
+            pix = pixels[self.nr_objects - 2][i]
             pos = get_xyz(pix, size)
             theta = self.rng.rand() * 2 * np.pi
             quat = Quaternion().from_rotation_matrix(rot_z(theta))
+            quat = Quaternion()
 
             p.removeBody(body_id)
 
@@ -640,6 +654,10 @@ class Environment:
 
         # Re-enable rendering.
         p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 1)
+
+        self.obj_files = []
+        for i in range(self.nr_objects):
+            self.obj_files.append(os.path.join(self.assets_root, 'objects/obj/' + str(self.obj_id)+'.obj'))
 
         # Generate a scene with randomly placed objects.
         self.objects = []
@@ -718,21 +736,22 @@ class Environment:
         stable_grasp, num_contacts = self.bhand.is_grasp_stable()
 
         # Check the validity of the grasp.
-        if stable_grasp:
-            print('Non_flats:', prev_non_flats, non_flats)
-            if non_flats < prev_non_flats or prev_flats < flats:
-                label = False
-            else:
-                # Filter stable grasps. Keep the ones that created space around the grasped object.
-                for obj in self.objects:
-                    pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
-                    if pos[2] > 0.25 and diffs[obj.body_id] > 0.015:
-                        label = True
-                        break
-                    else:
-                        label = False
-        else:
-            label = False
+        # if stable_grasp:
+        #     print('Non_flats:', prev_non_flats, non_flats)
+        #     if non_flats < prev_non_flats or prev_flats < flats:
+        #         label = False
+        #     else:
+        #         # Filter stable grasps. Keep the ones that created space around the grasped object.
+        #         for obj in self.objects:
+        #             pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
+        #             if pos[2] > 0.25 and diffs[obj.body_id] > 0.015:
+        #                 label = True
+        #                 break
+        #             else:
+        #                 label = False
+        # else:
+        #     label = False
+        label = stable_grasp
 
         # Move home
         self.bhand.move(self.bhand.home_position, action['quat'], duration=.1)
@@ -804,6 +823,8 @@ class Environment:
 
                 error = self.workspace2world(np.array([0.0, 0.0, 0.0]))[0] - pos
                 error[2] = 0.0
+                if np.linalg.norm(error) < 1e-6:
+                    continue
                 force_direction = error / np.linalg.norm(error)
                 p.applyExternalForce(obj.body_id, -1, force_magnitude * force_direction,
                                      np.array([pos[0], pos[1], 0.0]), p.WORLD_FRAME)

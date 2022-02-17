@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 from ppg.environment import Environment
 from ppg.agent import PushGrasping, HeuristicPushGrasping, PushGrasping2
-from ppg.train import train_fcn_net, train_classifier, eval_aperture_net
+# from ppg.train import train_fcn_net, train_classifier, eval_aperture_net
 from ppg.utils.utils import Logger
 
 
@@ -96,6 +96,13 @@ def train_agent(log_path, n_scenes, save_every=100, seed=0):
 
 
 def eval_agent(n_scenes, log_path, seed=0):
+    import sys
+    def block_print():
+        sys.stdout = open(os.devnull, 'w')
+
+    def enable_print():
+        sys.stdout = sys.__stdout__
+
     # Create a logger
     if os.path.exists(log_path):
         print('Directory ', log_path, 'exists, do you want to remove it? (y/n)')
@@ -122,29 +129,43 @@ def eval_agent(n_scenes, log_path, seed=0):
 
     policy = PushGrasping(params)
     # policy.load('../logs/supervised')
-    policy.load_seperately(fcn_model='../logs/fcn_model/model_5.pt',
-                           reg_model='../logs/regressor/model_10.pt')
+    policy.load_seperately(fcn_model='../logs/models/fcn.pt',
+                           reg_model='../logs/models/reg.pt')
     # policy.seed(seed)
 
     rng = np.random.RandomState()
     rng.seed(seed)
 
-    eval_data = []
-    success_rate = 0
-    attempts = 0
-    objects_removed = 0
-    for i in range(n_scenes):
-        print('Episode ', i)
-        episode_seed = rng.randint(0, pow(2, 32) - 1)
-        episode_data = run_episode(policy, env, episode_seed, train=False)
-        eval_data.append(episode_data)
+    obj_ids = []
+    results = []
+    for obj_file in os.listdir(os.path.join('../assets/objects/obj')):
+        if not obj_file.endswith('.obj'):
+            continue
+        obj_ids.append(int(obj_file.split('.')[0]))
+    obj_ids.sort()
+    for i in range(len(obj_ids)):
+        block_print()
+        eval_data = []
+        success_rate = 0
+        attempts = 0
+        objects_removed = 0
+        for j in range(2,8):
+            print('Episode ', i)
+            episode_seed = rng.randint(0, pow(2, 32) - 1)
+            env.obj_id = obj_ids[i]
+            env.nr_objects = j
+            episode_data = run_episode(policy, env, episode_seed, train=False)
+            eval_data.append(episode_data)
 
-        success_rate += episode_data['successes']
-        attempts += episode_data['attempts'] - episode_data['collisions']
-        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
-        print('Success_rate: {}, Scene Clearance: {}'.format(success_rate / attempts, objects_removed / len(eval_data)))
+            success_rate += episode_data['successes']
+            attempts += episode_data['attempts'] - episode_data['collisions']
+            objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
 
-    pickle.dump(eval_data, open(os.path.join(log_path, 'eval_data'), 'wb'))
+        enable_print()
+        results.append({'id':  obj_ids[i], 'success': success_rate / attempts, 'clearance':objects_removed / len(eval_data)})
+        print('Object ID: {}, Success_rate: {}, Scene Clearance: {}'.format(obj_ids[i], success_rate / attempts, objects_removed / len(eval_data)))
+
+    pickle.dump(results, open(os.path.join(log_path, 'results'), 'wb'))
 
 
 def collect_random_dataset(n_scenes, log_path, seed=1):
@@ -289,7 +310,7 @@ if __name__ == "__main__":
 
     # train_agent(log_path='../logs/self-supervised', n_scenes=10000, seed=0)
 
-    # eval(n_scenes=100, log_path='../logs/eval_supervised', seed=1)
+    eval_agent(n_scenes=100, log_path='../logs/challenging_scenes', seed=1)
 
     # analyze(log_dir='../logs/eval_heuristic_policy')
 
@@ -297,5 +318,5 @@ if __name__ == "__main__":
 
     # eval_aperture_net(params)
 
-    collect_random_dataset(n_scenes=10000, log_path='../logs/random-dataset-2', seed=2)
+    # collect_random_dataset(n_scenes=10000, log_path='../logs/random-dataset-10001', seed=10001)
     
