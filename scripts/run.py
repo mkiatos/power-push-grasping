@@ -18,8 +18,8 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
     obs = env.reset()
     print('Episode seed:', episode_seed)
 
-    while not policy.init_state_is_valid(obs):
-        obs = env.reset()
+    if not policy.init_state_is_valid(obs):
+        return None
 
     episode_data = {'successes': 0,
                     'fails': 0,
@@ -155,6 +155,8 @@ def eval_agent(n_scenes, log_path, seed=0):
             env.obj_id = obj_ids[i]
             env.nr_objects = j
             episode_data = run_episode(policy, env, episode_seed, train=False)
+            if episode_data is None:
+                continue
             eval_data.append(episode_data)
 
             success_rate += episode_data['successes']
