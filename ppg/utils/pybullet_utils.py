@@ -174,20 +174,22 @@ def load_obj(obj_path, scaling=1.0, position=[0, 0, 0], orientation=Quaternion()
     return body_id
 
 
-def get_distances_from_target(obs):
+def get_distances_from_target(obs, max_dist=10):
     objects = obs['full_state']
 
     distances = {}
     for target in objects:
+        distances[target.body_id] = []
+        distances[target.body_id].append(max_dist)
+
         if target.pos[2] < 0:
             continue
 
-        distances[target.body_id] = []
         for obj in objects:
             if obj.pos[2] < 0 or target.body_id == obj.body_id:
                 continue
 
-            points = p.getClosestPoints(target.body_id, obj.body_id, distance=10)
+            points = p.getClosestPoints(target.body_id, obj.body_id, distance=max_dist)
             if len(points) > 0:
                 dist = np.linalg.norm(np.array(points[0][5]) - np.array(points[0][6]))
                 distances[target.body_id].append(dist)
