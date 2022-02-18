@@ -478,7 +478,7 @@ class Environment:
         self.assets_root = assets_root
         self.workspace_pos = np.array(workspace_pos)
         self.disp = disp
-        self.nr_objects = [5, 7]
+        self.nr_objects = [5, 8]
 
         # Setup cameras.
         self.agent_cams = []
@@ -492,10 +492,11 @@ class Environment:
 
         self.objects = []
         self.obj_files = []
-        for obj_file in os.listdir(os.path.join(assets_root, 'objects/obj')):
+        objects_path = 'objects/objectsx_2/seen'
+        for obj_file in os.listdir(os.path.join(assets_root, objects_path)):
             if not obj_file.endswith('.obj'):
                 continue
-            self.obj_files.append(os.path.join(assets_root, 'objects/obj', obj_file))
+            self.obj_files.append(os.path.join(assets_root, objects_path, obj_file))
 
         self.rng = np.random.RandomState()
 
@@ -674,7 +675,6 @@ class Environment:
         self.bhand.move_fingers([0.0, theta, theta, theta], duration=.1, force=5)
 
         is_in_contact = self.bhand.move(action['pos'], action['quat'], duration=.5, stop_at_contact=True)
-
         # Check if during reaching the pre-grasp position, the hand collides with some object.
         if not is_in_contact:
 
@@ -717,20 +717,21 @@ class Environment:
         self.bhand.move(final_pos, action['quat'], duration=0.5)
         stable_grasp, num_contacts = self.bhand.is_grasp_stable()
 
+        # label = stable_grasp
         # Check the validity of the grasp.
         if stable_grasp:
-            print('Non_flats:', prev_non_flats, non_flats)
-            if non_flats < prev_non_flats or prev_flats < flats:
-                label = False
-            else:
-                # Filter stable grasps. Keep the ones that created space around the grasped object.
-                for obj in self.objects:
-                    pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
-                    if pos[2] > 0.25 and diffs[obj.body_id] > 0.015:
-                        label = True
-                        break
-                    else:
-                        label = False
+            # print('Non_flats:', prev_non_flats, non_flats)
+            # if non_flats < prev_non_flats or prev_flats < flats:
+            #     label = False
+            # else:
+            # Filter stable grasps. Keep the ones that created space around the grasped object.
+            for obj in self.objects:
+                pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
+                if pos[2] > 0.25 and diffs[obj.body_id] > 0.015:
+                    label = True
+                    break
+                else:
+                    label = False
         else:
             label = False
 
