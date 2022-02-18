@@ -16,6 +16,7 @@ from ppg.utils.utils import Logger
 def run_episode(policy, env, episode_seed, max_steps=15, train=True):
     env.seed(episode_seed)
     obs = env.reset()
+    input('')
     print('Episode seed:', episode_seed)
 
     if not policy.init_state_is_valid(obs):
@@ -143,6 +144,7 @@ def eval_agent(n_scenes, log_path, seed=0):
             continue
         obj_ids.append(int(obj_file.split('.')[0]))
     obj_ids.sort()
+    obj_ids=[58] #####################################################
     for i in range(len(obj_ids)):
         block_print()
         eval_data = []
@@ -312,7 +314,7 @@ if __name__ == "__main__":
 
     # train_agent(log_path='../logs/self-supervised', n_scenes=10000, seed=0)
 
-    eval_agent(n_scenes=100, log_path='../logs/challenging_scenes', seed=1)
+    eval_agent(n_scenes=100, log_path='../logs/tmp', seed=1)
 
     # analyze(log_dir='../logs/eval_heuristic_policy')
 
