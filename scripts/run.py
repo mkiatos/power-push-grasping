@@ -114,16 +114,20 @@ def eval_agent(n_scenes, log_path, seed=0):
     params['log_dir'] = log_path
 
     env = Environment(assets_root='../assets/', workspace_pos=[0.0, 0.0, 0.0])
-    # policy = PushGrasping(params)
-    # policy.load(weights_fcn='../logs/fcn_model/model_15.pt',
-    #             weights_cls='../logs/classifier/model_5.pt')
-    # policy = HeuristicPushGrasping(params)
-    # policy.seed(seed)
 
-    policy = PushGrasping(params)
-    # policy.load('../logs/supervised')
-    policy.load_seperately(fcn_model='../logs/fcn_model/model_5.pt',
-                           reg_model='../logs/regressor/model_10.pt')
+    policy = HeuristicPushGrasping(params)
+    policy.seed(seed)
+
+    # policy = PushGrasping(params)
+    # policy.load('../logs/self-supervised/model_3000')
+
+    # pPPG
+    # policy.load_seperately(fcn_model='../logs/models/fcn_model/model_10.pt',
+    #                        reg_model='../logs/models/ppg-large-dataset/regressor/model_6.pt')
+
+    # PPG
+    # policy.load_seperately(fcn_model='../logs/models/vanilla-ppg/fcn_model/model_10.pt',
+    #                        reg_model='../logs/models/vanilla-ppg/regressor/model_8.pt')
     # policy.seed(seed)
 
     rng = np.random.RandomState()
@@ -141,7 +145,7 @@ def eval_agent(n_scenes, log_path, seed=0):
 
         success_rate += episode_data['successes']
         attempts += episode_data['attempts'] - episode_data['collisions']
-        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
+        objects_removed += (episode_data['objects_removed'] + 1) / float(episode_data['objects_in_scene'])
         print('Success_rate: {}, Scene Clearance: {}'.format(success_rate / attempts, objects_removed / len(eval_data)))
 
     pickle.dump(eval_data, open(os.path.join(log_path, 'eval_data'), 'wb'))
@@ -181,7 +185,7 @@ def collect_random_dataset(n_scenes, log_path, seed=1):
             next_obs, grasp_info = env.step(env_action)
 
             if grasp_info['stable']:
-                transition = {'state': state, 'action': action, 'label': grasp_info['stable']}
+                transition = {'obs': obs, 'state': state, 'action': action, 'label': grasp_info['stable']}
                 policy.replay_buffer.store(transition)
 
             print(action)
@@ -204,7 +208,7 @@ def analyze(log_dir):
         print(episode_data)
         success_rate += episode_data['successes']
         attempts += episode_data['attempts'] - episode_data['collisions']
-        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
+        objects_removed += (episode_data['objects_removed'] + 1) / float(episode_data['objects_in_scene'])
 
     print('---------------------------------------------------------------------------------------')
     print(tabulate([['Heuristic', success_rate / attempts,
