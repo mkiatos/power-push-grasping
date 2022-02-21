@@ -273,6 +273,17 @@ def merge_folders(logs, out_dir):
         copy_sub_folders(os.path.join(logs, log_dir, 'replay_buffer'), out_dir)
 
 
+def load_transition(transition_dir):
+    import cv2
+    for i in range(2):
+        color = cv2.imread(os.path.join(transition_dir, 'color_' + str(i) + '.png'))
+        depth = cv2.imread(os.path.join(transition_dir, 'depth_' + str(i) + '.exr'), -1)
+        seg = cv2.imread(os.path.join(transition_dir, 'seg_' + str(i) + '.png'))
+        fig, ax = plt.subplots(1, 3)
+        ax[0].imshow(color)
+        ax[1].imshow(depth)
+        ax[2].imshow(seg[:, :, 0])
+        plt.show()
 if __name__ == "__main__":
 
     # params = {'dataset_dir': '../logs/train_self_supervised_per/replay_buffer',
