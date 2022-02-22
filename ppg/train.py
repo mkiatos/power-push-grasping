@@ -84,10 +84,11 @@ class ApertureDataset(data.Dataset):
         theta = -((action[2] + (2 * np.pi)) % (2 * np.pi))
         rot = cv2.getRotationMatrix2D((int(padded_shape[0] / 2), int(padded_shape[1] / 2)),
                                       theta * 180 / np.pi, 1.0)
-        rotated_heightmap = cv2.warpAffine(depth_heightmap, rot, (padded_shape[0], padded_shape[1]))
+        rotated_heightmap = cv2.warpAffine(depth_heightmap, rot, (padded_shape[0], padded_shape[1]),
+                                           flags=cv2.INTER_NEAREST)
 
         # Compute the position of p1 on rotated heightmap
-        rotated_pt = np.dot(rot, (p1[0] , p1[1], 1.0))
+        rotated_pt = np.dot(rot, (p1[0], p1[1], 1.0))
         rotated_pt = (int(rotated_pt[0]), int(rotated_pt[1]))
 
         # Crop heightmap
@@ -97,6 +98,11 @@ class ApertureDataset(data.Dataset):
         x_start = rotated_pt[0]
         x_end = min(padded_shape[0], rotated_pt[0] + 2 * self.crop_size)
         cropped_map[0:y_end - y_start, 0:x_end - x_start] = rotated_heightmap[y_start: y_end, x_start: x_end]
+
+        # Normalize maps ( ToDo: find mean and std) # Todo
+        image_mean = 0.01
+        image_std = 0.03
+        cropped_map = (cropped_map - image_mean) / image_std
 
         if self.plot:
             print(action[3])
@@ -122,25 +128,17 @@ class ApertureDataset(data.Dataset):
             ax[2].imshow(cropped_map)
             plt.show()
 
-        # Normalize maps ( ToDo: find mean and std) # Todo
-        image_mean = 0.01
-        image_std = 0.03
-        cropped_map = (cropped_map - image_mean) / image_std
-
         # Add extra channel
         # cropped_map = np.expand_dims(cropped_map, axis=0)
-        three_channel_map = np.zeros((3, 2*self.crop_size, 2*self.crop_size))
-        three_channel_map[0] = cropped_map
-        three_channel_map[1] = cropped_map
-        three_channel_map[2] = cropped_map
 
-        aperture = action[3]
-        # opening_id = np.argwhere(self.widths == action['opening']['min_width'])[0, 0]
-        # one_hot = np.zeros((len(self.widths),))
-        # one_hot[opening_id] = 1.0
+        aperture_img = np.zeros((3, 2*self.crop_size, 2*self.crop_size))
+        aperture_img[0] = cropped_map
+        aperture_img[1] = cropped_map
+        aperture_img[2] = cropped_map
+
         normalized_aperture = utils.min_max_scale(action[3], range=[0.6, 1.1], target_range=[0, 1])
 
-        return three_channel_map, np.array([normalized_aperture])
+        return aperture_img, np.array([normalized_aperture])
 
     def __len__(self):
         return len(self.dir_ids)
