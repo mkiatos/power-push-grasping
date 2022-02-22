@@ -349,102 +349,6 @@ class PushGrasping2:
         return is_terminal
 
 
-class HeuristicPushGrasping(PushGrasping2):
-    def __init__(self, params):
-        super(HeuristicPushGrasping, self).__init__(params)
-        self.params = params
-        self.robot = []
-
-    def seed(self, seed):
-        random.seed(seed)
-
-    def clustering(self, heigtmap, plot=False):
-
-        ids = np.argwhere(heigtmap > 0)
-        db = DBSCAN(eps=2, min_samples=10).fit(ids)
-
-        seg = np.zeros(heigtmap.shape)
-        for i in range(len(ids)):
-            seg[ids[i, 0], ids[i, 1]] = db.labels_[i] + 1
-
-        if plot:
-            fig, ax = plt.subplots(1, 2)
-            ax[0].imshow(heigtmap)
-            ax[1].imshow(seg)
-            plt.show()
-
-        return seg
-
-    def predict(self, heightmap):
-        # Perform clustering.
-        seg = self.clustering(heightmap)
-
-        # Find the smallest cluster.
-        obj_ids = np.unique(seg)
-        len_clusters = np.zeros(len(obj_ids),)
-        for i in range(len(obj_ids)):
-            len_clusters[i] = len(np.argwhere(seg == obj_ids[i]))
-        target_ids = np.argwhere(seg == np.argmin(len_clusters))
-
-        # Compute opening
-        y_min = np.min(target_ids[:, 0])
-        y_max = np.max(target_ids[:, 0])
-        x_min = np.min(target_ids[:, 1])
-        x_max = np.max(target_ids[:, 1])
-        largest_side = max(y_max - y_min, x_max - x_min)
-        aperture = compute_aperture(largest_side * 0.005) - 0.05
-
-        # Compute the valid pxls
-        valid_pxl_map = np.zeros(heightmap.shape)
-        for x in range(heightmap.shape[0]):
-            for y in range(heightmap.shape[1]):
-                dists = np.linalg.norm(np.array([y, x]) - target_ids, axis=1)
-                if np.min(dists) > 30 or np.min(dists) < 10:  # Todo fix the hardcoded values
-                    continue
-                valid_pxl_map[y, x] = 255
-
-        if (valid_pxl_map == 0).all():
-            return None
-
-        # Remove pxls that belongs to other objects.
-        obstacle_maps = np.ones(heightmap.shape)
-        obstacle_maps[heightmap > 0] = 0.0
-        valid_pxl_map *= obstacle_maps
-
-        # Pick a collision free path (ToDo: now we sample an action and check in simulation if it's collision-free)
-
-        # Compute initial position.
-        valid_pxls = np.argwhere(valid_pxl_map == 255)
-        valid_ids = np.arange(0, valid_pxls.shape[0])
-        pxl = valid_pxls[random.choice(valid_ids)]
-
-        target_centroid = np.mean(target_ids, axis=0)
-
-        # Compute direction.
-        p1 = np.array([pxl[1], pxl[0]])
-        p2 = np.array([target_centroid[1], target_centroid[0]])
-        push_dir = p2 - p1
-        theta = -np.arctan2(push_dir[1], push_dir[0])
-
-        # Compute distance
-        self.dist = np.linalg.norm(push_dir) * 0.005
-        # print(self.dist)
-
-        target_mask = np.zeros(heightmap.shape)
-        target_mask[seg == np.argmin(len_clusters)] = 122
-        # plt.imshow(valid_pxl_map + target_mask)
-        # plt.plot(pxl[1], pxl[0], 'o')
-        # plt.arrow(p1[0], p1[1], p2[0]-p1[0], p2[1]-p1[1], width=1)
-        # plt.show()
-
-        return [pxl[1], pxl[0], theta, aperture]
-
-    def action(self, action, bounds, pxl_size):
-        env_action = super(HeuristicPushGrasping, self).action(action, bounds, pxl_size)
-        env_action['push_distance'] = self.dist
-        return env_action
-
-
 class PushGrasping(Policy):
     def __init__(self, params):
         super(PushGrasping, self).__init__(params)
@@ -475,7 +379,7 @@ class PushGrasping(Policy):
         self.learn_step_counter = 0
         self.info = {'fcn_loss': [], 'reg_loss': [], 'learn_step_counter': 0}
 
-        os.mkdir(os.path.join(params['log_dir'], 'maps'))
+        # os.mkdir(os.path.join(params['log_dir'], 'maps'))
         np.set_printoptions(formatter={'float': lambda x: "{0:0.2f}".format(x)})
 
     def state_representation(self, obs):
@@ -879,7 +783,7 @@ class PushGrasping(Policy):
     def plot_maps(self, state, out_prob):
 
         glob_max_prob = np.max(out_prob)
-        fig, ax = plt.subplots(4, 4)
+        # fig, ax = plt.subplots(4, 4)
         for i in range(16):
             x = int(i / 4)
             y = i % 4
@@ -892,19 +796,23 @@ class PushGrasping(Policy):
                                                  target_range=(0, 1))
             best_pt = np.unravel_index(prediction_vis.argmax(), prediction_vis.shape)
             maximum_prob = np.max(out_prob[i][0])
+            #
+            # ax[x, y].imshow(state, cmap='gray')
+            # ax[x, y].imshow(prediction_vis, alpha=0.5)
+            # ax[x, y].set_title(str(i) + ', ' + str(format(maximum_prob, ".3f")))
 
-            ax[x, y].imshow(state, cmap='gray')
-            ax[x, y].imshow(prediction_vis, alpha=0.5)
-            ax[x, y].set_title(str(i) + ', ' + str(format(maximum_prob, ".3f")))
+            # if glob_max_prob == max_prob:
+            #     ax[x, y].plot(best_pt[1], best_pt[0], 'rx')
+            # else:
+            #     ax[x, y].plot(best_pt[1], best_pt[0], 'ro')
+            # dx = 20 * np.cos((i / 16) * 2 * np.pi)
+            # dy = -20 * np.sin((i / 16) * 2 * np.pi)
+            # ax[x, y].arrow(best_pt[1], best_pt[0], dx, dy, width=2, color='g')
+            plt.imshow(state, cmap='gray')
+            plt.imshow(prediction_vis, alpha=0.5)
+            plt.savefig(os.path.join(self.params['log_dir'], 'map_' + str(i) + '.png'), dpi=720)
 
-            if glob_max_prob == max_prob:
-                ax[x, y].plot(best_pt[1], best_pt[0], 'rx')
-            else:
-                ax[x, y].plot(best_pt[1], best_pt[0], 'ro')
-            dx = 20 * np.cos((i / 16) * 2 * np.pi)
-            dy = -20 * np.sin((i / 16) * 2 * np.pi)
-            ax[x, y].arrow(best_pt[1], best_pt[0], dx, dy, width=2, color='g')
-
+        plt.show()
         plt.savefig(os.path.join(self.params['log_dir'], 'maps', 'map_' + str(self.learn_step_counter) + '.png'),
                     dpi=720)
         plt.close()
@@ -923,8 +831,8 @@ class PushGrasping(Policy):
 
     @ classmethod
     def load(cls, log_dir):
-        params = pickle.load(open(os.path.join(log_dir, 'log_data'), 'rb'))
-        self = cls(params)
+        log_data = pickle.load(open(os.path.join(log_dir, 'log_data'), 'rb'))
+        self = cls(log_data['params'])
 
         self.fcn.load_state_dict(torch.load(os.path.join(log_dir, 'fcn.pt')))
         self.fcn.eval()
@@ -947,7 +855,6 @@ class PushGrasping(Policy):
         self.learn_step_counter = self.info['learn_step_counter']
 
     def terminal(self, obs, next_obs):
-
         # Check if there is only one object in the scene
         objects_above = 0
 
@@ -957,10 +864,106 @@ class PushGrasping(Policy):
                 # Check if there is at least one object in the scene with the axis parallel to world z.
                 rot_mat = obj.quat.rotation_matrix()
                 angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
-                if np.abs(angle_z) < 0.1:
+                if np.abs(angle_z) < 0.5:
                     objects_above += 1
                 else:
                     return True
 
         if objects_above <= 1:
             return True
+
+
+class HeuristicPushGrasping(PushGrasping):
+    def __init__(self, params):
+        super(HeuristicPushGrasping, self).__init__(params)
+        self.params = params
+        self.robot = []
+
+    def seed(self, seed):
+        random.seed(seed)
+
+    def clustering(self, heigtmap, plot=False):
+
+        ids = np.argwhere(heigtmap > 0)
+        db = DBSCAN(eps=2, min_samples=10).fit(ids)
+
+        seg = np.zeros(heigtmap.shape)
+        for i in range(len(ids)):
+            seg[ids[i, 0], ids[i, 1]] = db.labels_[i] + 1
+
+        if plot:
+            fig, ax = plt.subplots(1, 2)
+            ax[0].imshow(heigtmap)
+            ax[1].imshow(seg)
+            plt.show()
+
+        return seg
+
+    def predict(self, heightmap):
+        # Perform clustering.
+        seg = self.clustering(heightmap)
+
+        # Find the smallest cluster.
+        obj_ids = np.unique(seg)
+        len_clusters = np.zeros(len(obj_ids),)
+        for i in range(len(obj_ids)):
+            len_clusters[i] = len(np.argwhere(seg == obj_ids[i]))
+        target_ids = np.argwhere(seg == np.argmin(len_clusters))
+
+        # Compute opening
+        y_min = np.min(target_ids[:, 0])
+        y_max = np.max(target_ids[:, 0])
+        x_min = np.min(target_ids[:, 1])
+        x_max = np.max(target_ids[:, 1])
+        largest_side = max(y_max - y_min, x_max - x_min)
+        aperture = compute_aperture(largest_side * 0.005) - 0.05
+
+        # Compute the valid pxls
+        valid_pxl_map = np.zeros(heightmap.shape)
+        for x in range(heightmap.shape[0]):
+            for y in range(heightmap.shape[1]):
+                dists = np.linalg.norm(np.array([y, x]) - target_ids, axis=1)
+                if np.min(dists) > 30 or np.min(dists) < 10:  # Todo fix the hardcoded values
+                    continue
+                valid_pxl_map[y, x] = 255
+
+        if (valid_pxl_map == 0).all():
+            return None
+
+        # Remove pxls that belongs to other objects.
+        obstacle_maps = np.ones(heightmap.shape)
+        obstacle_maps[heightmap > 0] = 0.0
+        valid_pxl_map *= obstacle_maps
+
+        # Pick a collision free path (ToDo: now we sample an action and check in simulation if it's collision-free)
+
+        # Compute initial position.
+        valid_pxls = np.argwhere(valid_pxl_map == 255)
+        valid_ids = np.arange(0, valid_pxls.shape[0])
+        pxl = valid_pxls[random.choice(valid_ids)]
+
+        target_centroid = np.mean(target_ids, axis=0)
+
+        # Compute direction.
+        p1 = np.array([pxl[1], pxl[0]])
+        p2 = np.array([target_centroid[1], target_centroid[0]])
+        push_dir = p2 - p1
+        theta = -np.arctan2(push_dir[1], push_dir[0])
+
+        # Compute distance
+        self.dist = np.linalg.norm(push_dir) * 0.005
+        # print(self.dist)
+
+        target_mask = np.zeros(heightmap.shape)
+        target_mask[seg == np.argmin(len_clusters)] = 122
+        # plt.imshow(valid_pxl_map + target_mask)
+        # plt.plot(pxl[1], pxl[0], 'o')
+        # plt.arrow(p1[0], p1[1], p2[0]-p1[0], p2[1]-p1[1], width=1)
+        # plt.show()
+
+        return [pxl[1], pxl[0], theta, aperture]
+
+    def action(self, action):
+        env_action = super(HeuristicPushGrasping, self).action(action)
+        env_action['push_distance'] = self.dist
+        return env_action
