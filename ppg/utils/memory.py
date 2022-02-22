@@ -30,6 +30,13 @@ class ReplayBuffer:
         cv2.imwrite(os.path.join(folder_name, 'heightmap.exr'), transition['state'])
         pickle.dump(transition['action'], open(os.path.join(folder_name, 'action'), 'wb'))
 
+        # Save everything that obs contains
+        for i in range(len(transition['obs']['color'])):
+            cv2.imwrite(os.path.join(folder_name, 'color_' + str(i) + '.png'), transition['obs']['color'][i])
+            cv2.imwrite(os.path.join(folder_name, 'depth_' + str(i) + '.exr'), transition['obs']['depth'][i])
+            cv2.imwrite(os.path.join(folder_name, 'seg_' + str(i) + '.png'), transition['obs']['seg'][i])
+        pickle.dump(transition['obs']['full_state'], open(os.path.join(folder_name, 'full_state'), 'wb'))
+
         self.buffer_ids.append(self.count)
         if self.count < self.buffer_size:
             self.count += 1

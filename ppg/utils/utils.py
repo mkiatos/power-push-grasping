@@ -10,7 +10,7 @@ import yaml
 from ppg.utils import pybullet_utils
 
 
-def get_pointcloud(depth, intrinsics):
+def get_pointcloud(depth, seg, intrinsics):
     """
     Creates a point cloud from a depth image given the camera intrinsics parameters.
 
@@ -34,17 +34,26 @@ def get_pointcloud(depth, intrinsics):
     x = np.where(valid, z * (c - intrinsics[0, 2]) / intrinsics[0, 0], 0)
     y = np.where(valid, z * (r - intrinsics[1, 2]) / intrinsics[1, 1], 0)
     pcd = np.dstack((x, y, z))
-    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pcd.reshape(-1, 3)))
+
+    colors = np.zeros((seg.shape[0], seg.shape[1], 3))
+    colors[:, :, 0] = seg / np.max(seg)
+    colors[:, :, 1] = seg / np.max(seg)
+    colors[:, :, 2] = np.zeros((seg.shape[0], seg.shape[1]))
+
+    point_cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(pcd.reshape(-1, 3)))
+    point_cloud.colors = o3d.utility.Vector3dVector(colors.reshape(-1, 3))
+
+    return point_cloud
 
 
-def get_aligned_point_cloud(color, depth, configs, bounds, pixel_size, plot=False):
+def get_aligned_point_cloud(color, depth, seg, configs, bounds, pixel_size, plot=False):
     """
     Returns the scene point cloud aligned with the center of the workspace.
     """
     full_point_cloud = o3d.geometry.PointCloud()
-    for color, depth, config in zip(color, depth, configs):
+    for color, depth, seg, config in zip(color, depth, seg, configs):
         intrinsics = np.array(config['intrinsics']).reshape(3, 3)
-        point_cloud = get_pointcloud(depth, intrinsics)
+        point_cloud = get_pointcloud(depth, seg, intrinsics)
 
         transform = pybullet_utils.get_camera_pose(config['pos'],
                                                    config['target_pos'],
@@ -65,14 +74,16 @@ def get_aligned_point_cloud(color, depth, configs, bounds, pixel_size, plot=Fals
 
 
 def get_fused_heightmap(obs, configs, bounds, pix_size):
-    point_cloud = get_aligned_point_cloud(obs['color'], obs['depth'], configs, bounds, pix_size)
+    point_cloud = get_aligned_point_cloud(obs['color'], obs['depth'], obs['seg'], configs, bounds, pix_size)
     xyz = np.asarray(point_cloud.points)
+    seg_class = np.asarray(point_cloud.colors)
 
     # Compute heightmap size
     heightmap_size = np.round(((bounds[1][1] - bounds[1][0]) / pix_size,
                                (bounds[0][1] - bounds[0][0]) / pix_size)).astype(int)
 
     height_grid = np.zeros((heightmap_size[0], heightmap_size[0]), dtype=np.float32)
+    seg_grid = np.zeros((heightmap_size[0], heightmap_size[0]), dtype=np.float32)
 
     for i in range(xyz.shape[0]):
         x = xyz[i][0]
@@ -85,6 +96,12 @@ def get_fused_heightmap(obs, configs, bounds, pix_size):
         if 0 < idx_x < heightmap_size[0] - 1 and 0 < idx_y < heightmap_size[1] - 1:
             if height_grid[idx_y][idx_x] < z:
                 height_grid[idx_y][idx_x] = z
+                seg_grid[idx_y][idx_x] = seg_class[i, 0]
+
+    # fig, ax = plt.subplots(1, 2)
+    # ax[0].imshow(height_grid)
+    # ax[1].imshow(seg_grid)
+    # plt.show()
 
     return cv2.flip(height_grid, 1)
 

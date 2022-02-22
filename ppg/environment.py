@@ -478,7 +478,7 @@ class Environment:
         self.assets_root = assets_root
         self.workspace_pos = np.array(workspace_pos)
         self.disp = disp
-        self.nr_objects = [5, 7]
+        self.nr_objects = [5, 8]
 
         # Setup cameras.
         self.agent_cams = []
@@ -692,7 +692,6 @@ class Environment:
         self.bhand.move_fingers([0.0, theta, theta, theta], duration=.1, force=5)
 
         is_in_contact = self.bhand.move(action['pos'], action['quat'], duration=.5, stop_at_contact=True)
-
         # Check if during reaching the pre-grasp position, the hand collides with some object.
         if not is_in_contact:
 
@@ -735,6 +734,7 @@ class Environment:
         self.bhand.move(final_pos, action['quat'], duration=0.5)
         stable_grasp, num_contacts = self.bhand.is_grasp_stable()
 
+        # label = stable_grasp
         # Check the validity of the grasp.
         # if stable_grasp:
         #     print('Non_flats:', prev_non_flats, non_flats)

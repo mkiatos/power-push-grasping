@@ -22,7 +22,8 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
     if not policy.init_state_is_valid(obs):
         return None
 
-    episode_data = {'successes': 0,
+    episode_data = {'sr-1': 0,
+                    'sr-n': 0,
                     'fails': 0,
                     'attempts': 0,
                     'collisions': 0,
@@ -46,9 +47,12 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
         if grasp_info['collision']:
             episode_data['collisions'] += 1
 
+        if grasp_info['stable'] and i == 0:
+            episode_data['sr-1'] += 1
+
         episode_data['attempts'] += 1
         if grasp_info['stable']:
-            episode_data['successes'] += 1
+            episode_data['sr-n'] += 1
             episode_data['objects_removed'] += 1
         else:
             episode_data['fails'] += 1
@@ -58,7 +62,6 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
             policy.learn(transition)
 
         print(grasp_info)
-
         # if policy.terminal(obs, next_obs) or ((not grasp_info['stable']) and grasp_info['num_contacts'] > 0):
         if policy.terminal(obs, next_obs):
             break
@@ -122,16 +125,20 @@ def eval_agent(n_scenes, log_path, seed=0):
     params['log_dir'] = log_path
 
     env = Environment(assets_root='../assets/', workspace_pos=[0.0, 0.0, 0.0])
-    # policy = PushGrasping(params)
-    # policy.load(weights_fcn='../logs/fcn_model/model_15.pt',
-    #             weights_cls='../logs/classifier/model_5.pt')
-    # policy = HeuristicPushGrasping(params)
-    # policy.seed(seed)
 
-    policy = PushGrasping(params)
-    # policy.load('../logs/supervised')
-    policy.load_seperately(fcn_model='../logs/models/fcn.pt',
-                           reg_model='../logs/models/reg.pt')
+    policy = HeuristicPushGrasping(params)
+    policy.seed(seed)
+
+    # policy = PushGrasping(params)
+    # policy.load('../logs/self-supervised/model_3000')
+
+    # pPPG
+    # policy.load_seperately(fcn_model='../logs/models/fcn_model/model_10.pt',
+    #                        reg_model='../logs/models/ppg-large-dataset/regressor/model_6.pt')
+
+    # PPG
+    # policy.load_seperately(fcn_model='../logs/models/vanilla-ppg/fcn_model/model_10.pt',
+    #                        reg_model='../logs/models/vanilla-ppg/regressor/model_8.pt')
     # policy.seed(seed)
 
     rng = np.random.RandomState()
@@ -146,9 +153,10 @@ def eval_agent(n_scenes, log_path, seed=0):
     obj_ids.sort()
     obj_ids=[58] #####################################################
     for i in range(len(obj_ids)):
-        block_print()
+        # block_print()
         eval_data = []
-        success_rate = 0
+        sr_n = 0
+        sr_1 = 0
         attempts = 0
         objects_removed = 0
         for j in range(2,8):
@@ -161,13 +169,19 @@ def eval_agent(n_scenes, log_path, seed=0):
                 continue
             eval_data.append(episode_data)
 
-            success_rate += episode_data['successes']
+            sr_1 += episode_data['sr-1']
+            sr_n += episode_data['sr-n']
             attempts += episode_data['attempts'] - episode_data['collisions']
             objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
 
-        enable_print()
-        results.append({'id':  obj_ids[i], 'success': success_rate / attempts, 'clearance':objects_removed / len(eval_data)})
-        print('Object ID: {}, Success_rate: {}, Scene Clearance: {}'.format(obj_ids[i], success_rate / attempts, objects_removed / len(eval_data)))
+            print('Episode ', i)
+            print('SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(sr_1 / (i+1),
+                                                                  sr_n / attempts,
+                                                                  objects_removed / len(eval_data)))
+
+        # enable_print()
+        # results.append({'id':  obj_ids[i], 'success': sr_n / attempts, 'clearance':objects_removed / len(eval_data)})
+        # print('Object ID: {}, Success_rate: {}, Scene Clearance: {}'.format(obj_ids[i], sr_n / attempts, objects_removed / len(eval_data)))
 
     pickle.dump(results, open(os.path.join(log_path, 'results'), 'wb'))
 
@@ -206,7 +220,7 @@ def collect_random_dataset(n_scenes, log_path, seed=1):
             next_obs, grasp_info = env.step(env_action)
 
             if grasp_info['stable']:
-                transition = {'state': state, 'action': action, 'label': grasp_info['stable']}
+                transition = {'obs': obs, 'state': state, 'action': action, 'label': grasp_info['stable']}
                 policy.replay_buffer.store(transition)
 
             print(action)
@@ -229,7 +243,7 @@ def analyze(log_dir):
         print(episode_data)
         success_rate += episode_data['successes']
         attempts += episode_data['attempts'] - episode_data['collisions']
-        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
+        objects_removed += (episode_data['objects_removed'] + 1) / float(episode_data['objects_in_scene'])
 
     print('---------------------------------------------------------------------------------------')
     print(tabulate([['Heuristic', success_rate / attempts,
@@ -294,6 +308,17 @@ def merge_folders(logs, out_dir):
         copy_sub_folders(os.path.join(logs, log_dir, 'replay_buffer'), out_dir)
 
 
+def load_transition(transition_dir):
+    import cv2
+    for i in range(2):
+        color = cv2.imread(os.path.join(transition_dir, 'color_' + str(i) + '.png'))
+        depth = cv2.imread(os.path.join(transition_dir, 'depth_' + str(i) + '.exr'), -1)
+        seg = cv2.imread(os.path.join(transition_dir, 'seg_' + str(i) + '.png'))
+        fig, ax = plt.subplots(1, 3)
+        ax[0].imshow(color)
+        ax[1].imshow(depth)
+        ax[2].imshow(seg[:, :, 0])
+        plt.show()
 if __name__ == "__main__":
 
     # params = {'dataset_dir': '../logs/train_self_supervised_per/replay_buffer',
