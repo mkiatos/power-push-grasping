@@ -21,7 +21,8 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
     while not policy.init_state_is_valid(obs):
         obs = env.reset()
 
-    episode_data = {'successes': 0,
+    episode_data = {'sr-1': 0,
+                    'sr-n': 0,
                     'fails': 0,
                     'attempts': 0,
                     'collisions': 0,
@@ -45,9 +46,12 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
         if grasp_info['collision']:
             episode_data['collisions'] += 1
 
+        if grasp_info['stable'] and i == 0:
+            episode_data['sr-1'] += 1
+
         episode_data['attempts'] += 1
         if grasp_info['stable']:
-            episode_data['successes'] += 1
+            episode_data['sr-n'] += 1
             episode_data['objects_removed'] += 1
         else:
             episode_data['fails'] += 1
@@ -57,7 +61,6 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
             policy.learn(transition)
 
         print(grasp_info)
-
         # if policy.terminal(obs, next_obs) or ((not grasp_info['stable']) and grasp_info['num_contacts'] > 0):
         if policy.terminal(obs, next_obs):
             break
@@ -134,19 +137,23 @@ def eval_agent(n_scenes, log_path, seed=0):
     rng.seed(seed)
 
     eval_data = []
-    success_rate = 0
+    sr_n = 0
+    sr_1 = 0
     attempts = 0
     objects_removed = 0
     for i in range(n_scenes):
-        print('Episode ', i)
         episode_seed = rng.randint(0, pow(2, 32) - 1)
         episode_data = run_episode(policy, env, episode_seed, train=False)
         eval_data.append(episode_data)
 
-        success_rate += episode_data['successes']
+        sr_1 += episode_data['sr-1']
+        sr_n += episode_data['sr-n']
         attempts += episode_data['attempts'] - episode_data['collisions']
         objects_removed += (episode_data['objects_removed'] + 1) / float(episode_data['objects_in_scene'])
-        print('Success_rate: {}, Scene Clearance: {}'.format(success_rate / attempts, objects_removed / len(eval_data)))
+        print('Episode ', i)
+        print('SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(sr_1 / (i+1),
+                                                              sr_n / attempts,
+                                                              objects_removed / len(eval_data)))
 
     pickle.dump(eval_data, open(os.path.join(log_path, 'eval_data'), 'wb'))
 
