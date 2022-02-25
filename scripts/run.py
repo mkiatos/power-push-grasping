@@ -16,7 +16,6 @@ from ppg.utils.utils import Logger
 def run_episode(policy, env, episode_seed, max_steps=15, train=True):
     env.seed(episode_seed)
     obs = env.reset()
-    input('')
     print('Episode seed:', episode_seed)
 
     if not policy.init_state_is_valid(obs):
@@ -126,15 +125,15 @@ def eval_agent(n_scenes, log_path, seed=0):
 
     env = Environment(assets_root='../assets/', workspace_pos=[0.0, 0.0, 0.0])
 
-    policy = HeuristicPushGrasping(params)
-    policy.seed(seed)
+    # policy = HeuristicPushGrasping(params)
+    # policy.seed(seed)
 
-    # policy = PushGrasping(params)
+    policy = PushGrasping(params)
     # policy.load('../logs/self-supervised/model_3000')
 
     # pPPG
-    # policy.load_seperately(fcn_model='../logs/models/fcn_model/model_10.pt',
-    #                        reg_model='../logs/models/ppg-large-dataset/regressor/model_6.pt')
+    policy.load_seperately(fcn_model='../logs/grasp_fcn_model/model_10.pt',
+                           reg_model='../logs/grasp_regressor/model_5.pt')
 
     # PPG
     # policy.load_seperately(fcn_model='../logs/models/vanilla-ppg/fcn_model/model_10.pt',
@@ -146,42 +145,41 @@ def eval_agent(n_scenes, log_path, seed=0):
 
     obj_ids = []
     results = []
-    for obj_file in os.listdir(os.path.join('../assets/objects/obj')):
+    for obj_file in os.listdir(os.path.join('../assets/objects/')):
         if not obj_file.endswith('.obj'):
             continue
         obj_ids.append(int(obj_file.split('.')[0]))
     obj_ids.sort()
-    obj_ids=[58] #####################################################
+    obj_ids=[1, 2, 3, 4, 5, 6] #####################################################
     for i in range(len(obj_ids)):
-        # block_print()
         eval_data = []
         sr_n = 0
         sr_1 = 0
         attempts = 0
         objects_removed = 0
-        for j in range(2,8):
-            print('Episode ', i)
-            episode_seed = rng.randint(0, pow(2, 32) - 1)
-            env.obj_id = obj_ids[i]
-            env.nr_objects = j
-            episode_data = run_episode(policy, env, episode_seed, train=False)
-            if episode_data is None:
-                continue
-            eval_data.append(episode_data)
+        j = np.random.randint(3, 8)
+        print('Episode ', j-1)
+        block_print()
+        episode_seed = rng.randint(0, pow(2, 32) - 1)
+        env.obj_id = obj_ids[i]
+        env.nr_objects = j
+        episode_data = run_episode(policy, env, episode_seed, train=False)
+        if episode_data is None:
+            continue
+        eval_data.append(episode_data)
 
-            sr_1 += episode_data['sr-1']
-            sr_n += episode_data['sr-n']
-            attempts += episode_data['attempts'] - episode_data['collisions']
-            objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
+        sr_1 += episode_data['sr-1']
+        sr_n += episode_data['sr-n']
+        attempts += episode_data['attempts'] - episode_data['collisions']
+        objects_removed += episode_data['objects_removed'] / float(episode_data['objects_in_scene'] - 1)
+        enable_print()
 
-            print('Episode ', i)
-            print('SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(sr_1 / (i+1),
-                                                                  sr_n / attempts,
-                                                                  objects_removed / len(eval_data)))
+        # print('SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(sr_1 / (j-1),
+        #                                                       sr_n / attempts,
+        #                                                       objects_removed / len(eval_data)))
 
-        # enable_print()
-        # results.append({'id':  obj_ids[i], 'success': sr_n / attempts, 'clearance':objects_removed / len(eval_data)})
-        # print('Object ID: {}, Success_rate: {}, Scene Clearance: {}'.format(obj_ids[i], sr_n / attempts, objects_removed / len(eval_data)))
+    # results.append({'id':  obj_ids[i], 'success': sr_n / attempts, 'clearance':objects_removed / len(eval_data)})
+    print('Object ID: {}, SR-1: {}, SR-N: {}, Scene Clearance: {}'.format(obj_ids[i], sr_1 / (j-1), sr_n / attempts, objects_removed / len(eval_data)))
 
     pickle.dump(results, open(os.path.join(log_path, 'results'), 'wb'))
 
@@ -339,7 +337,7 @@ if __name__ == "__main__":
 
     # train_agent(log_path='../logs/self-supervised', n_scenes=10000, seed=0)
 
-    eval_agent(n_scenes=100, log_path='../logs/tmp', seed=1)
+    eval_agent(n_scenes=100, log_path='../logs/heuristic _challenging_eval', seed=1)
 
     # analyze(log_dir='../logs/eval_heuristic_policy')
 

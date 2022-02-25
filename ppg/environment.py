@@ -657,7 +657,7 @@ class Environment:
 
         self.obj_files = []
         for i in range(self.nr_objects):
-            self.obj_files.append(os.path.join(self.assets_root, 'objects/obj/' + str(self.obj_id)+'.obj'))
+            self.obj_files.append(os.path.join(self.assets_root, 'objects/single/' + str(self.obj_id)+'.obj'))
 
         # Generate a scene with randomly placed objects.
         self.objects = []
