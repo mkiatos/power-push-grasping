@@ -1,6 +1,6 @@
 # Power Push-Grasping
 
-Power Push-Grasping (PPG) is a method for planning multi-fingered power grasps in dense clutter. Especially, robot agents are trained in order to create enough space for the fingers to
+Power Push-Grasping (PPG) is a method for planning multi-fingered power grasps in dense clutter. Specifically, robot agents are trained in order to create enough space for the fingers to
 wrap around the target object to perform a stable power grasp, using a single primitive action.
 
 This repository provides PyTorch code for training and testing PPG policies in simulation with a Barrett Hand. This is the reference implementation for the paper: 'Learning Push-Grasping in Dense Clutter'.
@@ -21,21 +21,27 @@ source ./venv/bin/activate
 pip install -e .
 ```
 
-Install PytTorch 1.9.0
+In this implementation PytTorch 1.9.0 was used:
 ```shell
 pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f https://download.pytorch.org/whl/cu111/torch_stable.html
 ```
 
 ## A Quick-Start: Demo in Simulation
 
-Download the pretrained models.
+1.Download the pretrained models.
 ```commandline
-
+cd downloads
+./download-weights.sh
+cd ..
+```
+2.Then, run the following command.
+```commandline
+python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_model.pt' --n_scenes 10
 ```
 
 
 ## Dataset
-Generate training data (saved locally).
+Collect training data (saved locally).
 ```commandline
 python collect_data.py --n_samples 10000 --seed 1
 ```
@@ -54,5 +60,5 @@ python train.py --module 'reg' --epochs 100
 ## Evaluation
 To evaluate your own models just replace the snapshot:
 ```commandline
-python test.py --fcn_model '..' --reg_model '..' --n_scenes 100 --seed 0
+python test.py --fcn_model path-to-fcn-model --reg_model path-to-reg-model --object_set 'seen' --n_scenes 100 --seed 0
 ```
