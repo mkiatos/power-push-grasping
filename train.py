@@ -22,9 +22,6 @@ class HeightmapDataset(data.Dataset):
         self.dataset_dir = dataset_dir
         self.dir_ids = dir_ids
 
-        # self.widths = np.array([0.6, 0.7, 0.8, 0.9, 1.0, 1.1]) # ToDo: Hardcoded
-        self.widths = np.array([0.6])
-
     def __getitem__(self, idx):
         # print(os.path.join(self.dataset_dir, self.dir_ids[idx]))
         heightmap = cv2.imread(os.path.join(self.dataset_dir, self.dir_ids[idx], 'heightmap.exr'), -1)
@@ -145,46 +142,46 @@ class ApertureDataset(data.Dataset):
         return len(self.dir_ids)
 
 
-def train_fcn_net(params):
-
+def train_fcn_net(args):
+    log_path = 'logs_tmp/fcn'
     # Create dir for model weights
-    if os.path.exists(params['log_path']):
-        print('Directory ', params['log_path'], 'exists, do you want to remove it? (y/n)')
+    if os.path.exists(log_path):
+        print('Directory ', log_path, 'exists, do you want to remove it? (y/n)')
         answer = input('')
         if answer == 'y':
-            shutil.rmtree(params['log_path'])
-            os.mkdir(params['log_path'])
+            shutil.rmtree(log_path)
+            os.mkdir(log_path)
         else:
             exit()
     else:
-        os.mkdir(params['log_path'])
+        os.mkdir(log_path)
 
-    transition_dirs = next(os.walk(params['dataset_dir']))[1]
+    transition_dirs = next(os.walk(args.dataset_dir))[1]
 
     # Split data to training/validation
     random.seed(0)
     random.shuffle(transition_dirs)
-    train_ids = transition_dirs[:int(params['split_ratio'] * len(transition_dirs))]
-    val_ids = transition_dirs[int(params['split_ratio'] * len(transition_dirs)):]
+    train_ids = transition_dirs[:int(args.split_ratio * len(transition_dirs))]
+    val_ids = transition_dirs[int(args.split_ratio * len(transition_dirs)):]
     # train_ids = train_ids[::4]
     # val_ids = val_ids[::4]
 
-    train_dataset = HeightmapDataset(params['dataset_dir'], train_ids)
-    val_dataset = HeightmapDataset(params['dataset_dir'], val_ids)
+    train_dataset = HeightmapDataset(args.dataset_dir, train_ids)
+    val_dataset = HeightmapDataset(args.dataset_dir, val_ids)
 
     data_loader_train = data.DataLoader(train_dataset,
-                                        batch_size=params['batch_size'],
+                                        batch_size=args.batch_size,
                                         shuffle=True)
-    data_loader_val = data.DataLoader(val_dataset, batch_size=params['batch_size'])
+    data_loader_val = data.DataLoader(val_dataset, batch_size=args.batch_size)
     data_loaders = {'train': data_loader_train, 'val': data_loader_val}
     print('{} training data, {} validation data'.format(len(train_ids), len(val_ids)))
 
     model = ResFCN().to('cuda')
-    optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'])
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # criterion = nn.SmoothL1Loss(reduction='none')
     criterion = nn.BCELoss(reduction='none')
 
-    for epoch in range(params['epochs']):
+    for epoch in range(args.epochs):
         model.train()
         for batch in data_loader_train:
             x = batch[0].to('cuda')
@@ -217,54 +214,52 @@ def train_fcn_net(params):
 
         # Save model
         if epoch % 1 == 0:
-            torch.save(model.state_dict(), os.path.join(params['log_path'], 'model_' + str(epoch) + '.pt'))
+            torch.save(model.state_dict(), os.path.join(log_path, 'model_' + str(epoch) + '.pt'))
 
         print('Epoch {}: training loss = {:.4f} '
               ', validation loss = {:.4f}'.format(epoch, epoch_loss['train'] / len(data_loaders['train']),
                                                   epoch_loss['val'] / len(data_loaders['val'])))
 
 
-def train_regressor(params):
+def train_regressor(args):
+    log_path = 'logs_tmp/reg'
     # Create dir for model weights
-    if os.path.exists(params['log_path']):
-        print('Directory ', params['log_path'], 'exists, do you want to remove it? (y/n)')
+    if os.path.exists(log_path):
+        print('Directory ', log_path, 'exists, do you want to remove it? (y/n)')
         answer = input('')
         if answer == 'y':
-            shutil.rmtree(params['log_path'])
-            os.mkdir(params['log_path'])
+            shutil.rmtree(log_path)
+            os.mkdir(log_path)
         else:
             exit()
     else:
-        os.mkdir(params['log_path'])
+        os.mkdir(log_path)
 
-    transition_dirs = next(os.walk(params['dataset_dir']))[1]
+    transition_dirs = next(os.walk(args.dataset_dir))[1]
     transition_dirs = transition_dirs[:int(0.95 * len(transition_dirs))]
 
     # Split data to training/validation
     random.seed(0)
     random.shuffle(transition_dirs)
-    train_ids = transition_dirs[:int(params['split_ratio'] * len(transition_dirs))]
-    val_ids = transition_dirs[int(params['split_ratio'] * len(transition_dirs)):]
+    train_ids = transition_dirs[:int(args.split_ratio * len(transition_dirs))]
+    val_ids = transition_dirs[int(args.split_ratio * len(transition_dirs)):]
 
-    train_dataset = ApertureDataset(params['dataset_dir'], train_ids)
-    val_dataset = ApertureDataset(params['dataset_dir'], val_ids)
+    train_dataset = ApertureDataset(args.dataset_dir, train_ids)
+    val_dataset = ApertureDataset(args.dataset_dir, val_ids)
 
-    data_loader_train = data.DataLoader(train_dataset,
-                                        batch_size=params['batch_size'],
-                                        shuffle=True)
-    data_loader_val = data.DataLoader(val_dataset,
-                                      batch_size=params['batch_size'])
+    data_loader_train = data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+    data_loader_val = data.DataLoader(val_dataset, batch_size=args.batch_size)
     data_loaders = {'train': data_loader_train, 'val': data_loader_val}
     print('{} training data, {} validation data'.format(len(train_ids), len(val_ids)))
 
     # model = Classifier(n_classes=3).to('cuda')
     model = Regressor().to('cuda')
 
-    optimizer = optim.Adam(model.parameters(), lr=params['learning_rate'])
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     # criterion = nn.CrossEntropyLoss()
     criterion = nn.SmoothL1Loss()
 
-    for epoch in range(params['epochs']):
+    for epoch in range(args.epochs):
         model.train()
         for batch in data_loader_train:
             x = batch[0].to('cuda', dtype=torch.float32)
@@ -302,7 +297,7 @@ def train_regressor(params):
 
         # Save model
         if epoch % 1 == 0:
-            torch.save(model.state_dict(), os.path.join(params['log_path'], 'model_' + str(epoch) + '.pt'))
+            torch.save(model.state_dict(), os.path.join(log_path, 'model_' + str(epoch) + '.pt'))
 
         print('Epoch:', epoch)
         print('loss: train/val {:.4f}/{:.4f}'.format(epoch_loss['train'] / len(data_loaders['train']),
@@ -313,43 +308,15 @@ def train_regressor(params):
         print('-----------------------')
 
 
-def eval_aperture_net(params):
-    transition_dirs = next(os.walk(params['dataset_dir']))[1]
-    test_transitions = transition_dirs[int(0.95 * len(transition_dirs)):]
-
-    test_dataset = ApertureDataset(params['dataset_dir'], test_transitions)
-    data_loader_test = data.DataLoader(test_dataset, batch_size=1)
-
-    print('{} test data'.format(len(test_dataset)))
-
-    # model = Classifier(n_classes=3).to('cuda')
-    model = Regressor().to('cuda')
-    model.load_state_dict(torch.load('../logs/regressor/model_10.pt'))
-    model.eval()
-
-    for batch in data_loader_test:
-        x = batch[0].to('cuda', dtype=torch.float32)
-        y = batch[1].to('cuda', dtype=torch.float32)
-
-        pred = model(x)
-
-        pred = utils.min_max_scale(pred.detach().cpu().numpy(), range=[0, 1], target_range=[0.6, 1.1])
-        y = utils.min_max_scale(y.detach().cpu().numpy(), range=[0, 1], target_range=[0.6, 1.1])
-
-        print(pred, y)
-        input('')
-
-
 def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('--dataset_dir', default='fcn', type=str, help='')
+    parser.add_argument('--dataset_dir', default='logs/ppg-dataset', type=str, help='')
     parser.add_argument('--module', default='fcn', type=str, help='')
-    parser.add_argument('--epochs', default='fcn', type=str, help='')
-    parser.add_argument('--lr', default='fcn', type=str, help='')
-    parser.add_argument('--batch_size', default='fcn', type=str, help='')
-
-    args = parser.parse_args()
-    return args
+    parser.add_argument('--epochs', default=100, type=int, help='')
+    parser.add_argument('--lr', default=0.0001, type=float, help='')
+    parser.add_argument('--batch_size', default=1, type=int, help='')
+    parser.add_argument('--split_ratio', default=0.9, type=float, help='')
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
