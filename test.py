@@ -71,7 +71,7 @@ def eval_agent(args):
     env = Environment(assets_root='assets/', objects_set=args.object_set)
 
     policy = PushGrasping(params)
-    policy.load_seperately(fcn_model=args.fcn_model, reg_model=args.reg_model)
+    policy.load(fcn_model=args.fcn_model, reg_model=args.reg_model)
 
     rng = np.random.RandomState()
     rng.seed(args.seed)
