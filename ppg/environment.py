@@ -11,6 +11,7 @@ from ppg.utils import robotics, pybullet_utils, urdf_editor
 from ppg import cameras
 import ppg.utils.utils as utils
 
+MOUNT_URDF_PATH = 'mount.urdf'
 UR5_URDF_PATH = 'ur5e_bhand.urdf'
 UR5_WORKSPACE_URDF_PATH = 'table/table.urdf'
 PLANE_URDF_PATH = "plane/plane.urdf"
@@ -87,7 +88,7 @@ class Object:
 
 class FloatingGripper:
     """
-    A mouving mount and a gripper. The mount has 4 joints:
+    A moving mount and a gripper. The mount has 4 joints:
             0: prismatic x
             1: prismatic y
             2: prismatic z
@@ -99,13 +100,12 @@ class FloatingGripper:
                  home_position,
                  pos_offset,
                  orn_offset,
-                 simulation
-                 ):
+                 simulation):
         self.home_position = home_position
-        self.mount_urdf = '../assets/mount.urdf'
 
         # If there is no urdf file, generate the mounted-gripper urdf.
-        mounted_urdf_name = "../assets/mounted_" + robot_hand_urdf.split('/')[-1].split('.')[0] + ".urdf"
+        self.mount_urdf = os.path.join('assets', MOUNT_URDF_PATH)
+        mounted_urdf_name = "assets/mounted_" + robot_hand_urdf.split('/')[-1].split('.')[0] + ".urdf"
         if not os.path.exists(mounted_urdf_name):
             self.generate_mounted_urdf(robot_hand_urdf, pos_offset, orn_offset)
 
@@ -167,7 +167,7 @@ class FloatingGripper:
         )
         new_joint.joint_type = p.JOINT_FIXED
         new_joint.joint_name = "joint_mount_gripper"
-        urdfname = "../assets/mounted_" + robot_hand_urdf.split('/')[-1].split('.')[0] + ".urdf"
+        urdfname = "assets/mounted_" + robot_hand_urdf.split('/')[-1].split('.')[0] + ".urdf"
         ed_mount.saveUrdf(urdfname)
 
         # Remove mount and gripper bodies.
@@ -210,11 +210,6 @@ class FloatingGripper:
                 forces=[100 * self.force, 100 * self.force, 100 * self.force, 100 * self.force],
                 positionGains=[100 * self.speed, 100 * self.speed, 100 * self.speed, 100 * self.speed]
             )
-
-            # points = p.getContactPoints(bodyA=self.robot_hand_id)
-            # if len(points) > 0:
-            #     for pnt in points:
-            #         print('forces:', np.linalg.norm(np.array(pnt[-1])))
 
             if stop_at_contact:
                 points = p.getContactPoints(bodyA=self.robot_hand_id)
@@ -267,7 +262,7 @@ class FloatingBHand(FloatingGripper):
                             'bh_j32_joint', 'bh_j13_joint', 'bh_j23_joint', 'bh_j33_joint']
         self.indices = pybullet_utils.get_joint_indices(self.joint_names, self.robot_hand_id)
 
-        # Bhand links (for contact check)
+        # Bhand links (for contact check).
         self.link_names = ['bh_base_link',
                            'bh_finger_32_link', 'bh_finger_33_link',
                            'bh_finger_22_link', 'bh_finger_23_link',
@@ -277,8 +272,9 @@ class FloatingBHand(FloatingGripper):
         self.distal_indices = pybullet_utils.get_link_indices(self.distals, body_unique_id=self.robot_hand_id)
 
         # Move fingers to home position.
-        init_aperture_value = 0.6
-        self.move_fingers([0.0, init_aperture_value, init_aperture_value, init_aperture_value])
+        home_aperture_value = 0.6
+        self.move_fingers([0.0, home_aperture_value, home_aperture_value, home_aperture_value])
+        self.configure(n_links_before=4)
 
         # pose_13 = pybullet_utils.get_link_pose('bh_finger_1_tip_link')
         # pose_23 = pybullet_utils.get_link_pose('bh_finger_2_tip_link')
@@ -289,8 +285,6 @@ class FloatingBHand(FloatingGripper):
         # dist = np.linalg.norm(p1 - p2)
         # print(dist)
         # input('')
-
-        self.configure(n_links_before=4)
 
     def set_hand_joint_position(self, joint_position, force):
         for i in range(len(self.joint_names)):
@@ -469,16 +463,16 @@ class Environment:
 
     def __init__(self,
                  assets_root,
-                 workspace_pos,
+                 objects_set,
                  disp=True,
                  hz=240):
 
         self.pxl_size = 0.005
         self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])  # workspace limits
         self.assets_root = assets_root
-        self.workspace_pos = np.array(workspace_pos)
-        self.disp = disp
+        self.workspace_pos = np.array([0.0, 0.0, 0.0])
         self.nr_objects = [5, 8]
+        self.disp = disp
 
         # Setup cameras.
         self.agent_cams = []
@@ -492,7 +486,7 @@ class Environment:
 
         self.objects = []
         self.obj_files = []
-        objects_path = 'objects/objectsx_2/seen'
+        objects_path = os.path.join('objects', objects_set)
         for obj_file in os.listdir(os.path.join(assets_root, objects_path)):
             if not obj_file.endswith('.obj'):
                 continue
@@ -505,7 +499,7 @@ class Environment:
             p.connect(p.GUI)
 
             # Move default camera closer to the scene.
-            target = np.array(workspace_pos)
+            target = np.array(self.workspace_pos)
             p.resetDebugVisualizerCamera(
                 cameraDistance=0.75,
                 cameraYaw=180,
@@ -519,6 +513,8 @@ class Environment:
         p.setTimeStep(1.0 / hz)
 
         self.simulation = Simulation(self.objects)
+
+        self.singulation_condition = True
 
     def seed(self, seed):
         self.rng.seed(seed)
@@ -645,7 +641,6 @@ class Environment:
         # Generate a scene with randomly placed objects.
         self.objects = []
         self.add_objects()
-
         self.simulation.objects = self.objects
 
         # Remove flat objects.
@@ -655,7 +650,6 @@ class Environment:
         self.hug(force_magnitude=1)
 
         self.remove_flats()
-
         while self.is_static():
             time.sleep(0.001)
             self.simulation.step()
@@ -663,9 +657,8 @@ class Environment:
         return self.get_obs()
 
     def step(self, action):
-        prev_flats, prev_non_flats = self.get_flat_objects()
 
-        # Move to pre-grasp position.
+        # Move above the pre-grasp position.
         pre_grasp_pos = action['pos'].copy()
         pre_grasp_pos[2] += 0.3
         self.bhand.move(pre_grasp_pos, action['quat'], duration=0.1)
@@ -674,11 +667,11 @@ class Environment:
         theta = action['aperture']
         self.bhand.move_fingers([0.0, theta, theta, theta], duration=.1, force=5)
 
+        # Move to the pre-grasp position and Check if during reaching the pre-grasp position,
+        # the hand collides with some object.
         is_in_contact = self.bhand.move(action['pos'], action['quat'], duration=.5, stop_at_contact=True)
-        # Check if during reaching the pre-grasp position, the hand collides with some object.
         if not is_in_contact:
-
-            # Compute distances of each object from all other objects
+            # Compute distances of each object from other objects.
             obs = self.get_obs()
             dists = pybullet_utils.get_distances_from_target(obs)
 
@@ -687,14 +680,11 @@ class Environment:
             grasp_pos = action['pos'] + rot[0:3, 2] * action['push_distance']
             self.bhand.move(grasp_pos, action['quat'], duration=2)
 
+            # Compute distances of each object from other objects after pushing.
             next_obs = self.get_obs()
             next_dists = pybullet_utils.get_distances_from_target(next_obs)
 
-            # if len(next_dists) == 1:
-            #     return self.get_obs(), {'collision': is_in_contact,
-            #                             'stable': False,
-            #                             'num_contacts': 0}
-
+            # Compute the difference between the distances (singulation distance, see paper)
             diffs = {}
             for obj_id in dists:
                 if obj_id in next_dists and obj_id in dists:
@@ -702,9 +692,6 @@ class Environment:
 
             # Close the fingers.
             self.bhand.close()
-
-            flats, non_flats = self.get_flat_objects()
-
         else:
             grasp_pos = action['pos']
 
@@ -717,23 +704,20 @@ class Environment:
         self.bhand.move(final_pos, action['quat'], duration=0.5)
         stable_grasp, num_contacts = self.bhand.is_grasp_stable()
 
-        # label = stable_grasp
         # Check the validity of the grasp.
-        if stable_grasp:
-            # print('Non_flats:', prev_non_flats, non_flats)
-            # if non_flats < prev_non_flats or prev_flats < flats:
-            #     label = False
-            # else:
-            # Filter stable grasps. Keep the ones that created space around the grasped object.
+        grasp_label = stable_grasp
+
+        # Filter stable grasps. Keep the ones that created space around the grasped object.
+        # If there is an object above the table (grasped and remained in the hand) and the push-grasping
+        # increased the distance of the grasped objects from others, then count it as a successful
+        if self.singulation_condition and stable_grasp:
             for obj in self.objects:
                 pos, _ = p.getBasePositionAndOrientation(bodyUniqueId=obj.body_id)
                 if pos[2] > 0.25 and diffs[obj.body_id] > 0.015:
-                    label = True
+                    grasp_label = True
                     break
                 else:
-                    label = False
-        else:
-            label = False
+                    grasp_label = False
 
         # Move home
         self.bhand.move(self.bhand.home_position, action['quat'], duration=.1)
@@ -744,7 +728,7 @@ class Environment:
         self.remove_flats()
 
         return self.get_obs(), {'collision': is_in_contact,
-                                'stable': label,
+                                'stable': grasp_label,
                                 'num_contacts': num_contacts}
 
     def get_obs(self):
@@ -835,21 +819,29 @@ class Environment:
                 return True
         return False
 
-    def get_flat_objects(self):
-        flats = 0
-        non_flats = 0
-        for obj in self.objects:
-            obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
 
-            rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
-            angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
 
-            if obj_pos[2] < 0:
-                continue
+ # def get_flat_objects(self):
+ #            flats = 0
+ #            non_flats = 0
+ #            for obj in self.objects:
+ #                obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
+ #
+ #                rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
+ #                angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
+ #
+ #                if obj_pos[2] < 0:
+ #                    continue
+ #
+ #                if np.abs(angle_z) > 0.1:
+ #                    flats += 1
+ #                else:
+ #                    non_flats += 1
+ #
+ #            return flats, non_flats
+ #        prev_flats, prev_non_flats = get_flat_objects()
 
-            if np.abs(angle_z) > 0.1:
-                flats += 1
-            else:
-                non_flats += 1
-
-        return flats, non_flats
+ # print('Non_flats:', prev_non_flats, non_flats)
+                # if non_flats < prev_non_flats or prev_flats < flats:
+                #     label = False
+                # else:
