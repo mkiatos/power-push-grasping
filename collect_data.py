@@ -19,6 +19,7 @@ def collect_random_dataset(args):
     memory = ReplayBuffer(os.path.join(log_folder, 'ppg-dataset'))
 
     env = Environment(assets_root='assets/', objects_set='seen')
+    env.singulation_condition = args.singulation_condition
 
     with open('yaml/bhand.yml', 'r') as stream:
         params = yaml.safe_load(stream)
@@ -66,6 +67,7 @@ def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--n_samples', default=10000, type=int, help='')
     parser.add_argument('--seed', default=1, type=int, help='')
+    parser.add_argument('--singulation_condition', action='store_true', default=False, help='')
     return parser.parse_args()
 
 
