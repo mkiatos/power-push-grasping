@@ -27,14 +27,21 @@ pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f ht
 ```
 
 ## A Quick-Start: Demo in Simulation
+<img src="images/challenging.gif" height=220px align="right" />
+<img src="images/sim1.gif" height=220px align="right" />
 
-1.Download the pretrained models.
+This demo runs our pre-trained model with a Barrett Hand in simulation on an environment. The objective is
+to perform a stable graspr. The video on the left visualizes the PPG policy on seen objects while the video on the right
+visualizes the performance of the PPG policy on challenging scenes. To run a quick demo follow the instructions.
+
+Download the pretrained models.
 ```commandline
 cd downloads
 ./download-weights.sh
 cd ..
 ```
-2.Then, run the following command.
+
+Then, run the following command.
 ```commandline
 python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_model.pt' --n_scenes 10
 ```
@@ -43,22 +50,31 @@ python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_m
 ## Dataset
 Collect training data (saved locally).
 ```commandline
+python collect_data.py --singulation_condition --n_samples 10000 --seed 1
+```
+If you want to collect data without the singulation condition (as described in the paper).
+```commandline
 python collect_data.py --n_samples 10000 --seed 1
 ```
 
 ## Training
 To train the FCN model for predicting the position and orientation:
 ```commandline
-python train.py --module 'fcn' --epochs 100
+python train.py --dataset_dir path_to_dataset --module 'fcn' --epochs 100 --batch_size 1 --lr 0.0001
 ```
 
 To train the Aperture-CNN regression module:
 ```commandline
-python train.py --module 'reg' --epochs 100
+python train.py --dataset_dir path_to_dataset --module 'reg' --epochs 100 --batch_size 4 --lr 0.0001
 ```
 
 ## Evaluation
-To evaluate your own models just replace the snapshot:
+To evaluate your own models just replace the snapshot. If you want to check the performance on unseen object set, just change the argument to --object_set 'unseen':
 ```commandline
 python test.py --fcn_model path-to-fcn-model --reg_model path-to-reg-model --object_set 'seen' --n_scenes 100 --seed 0
+```
+
+To evaluate on challenging scenes.
+```commandline
+
 ```
