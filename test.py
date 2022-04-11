@@ -1,8 +1,9 @@
-import pickle
 import yaml
 import numpy as np
 import argparse
 import copy
+import os
+import sys
 
 from ppg.environment import Environment
 from ppg.agent import PushGrasping
@@ -97,7 +98,53 @@ def eval_agent(args):
 
 
 def eval_challenging(args):
-    pass
+    def block_print():
+        sys.stdout = open(os.devnull, 'w')
+
+    def enable_print():
+        sys.stdout = sys.__stdout__
+
+    with open('yaml/bhand.yml', 'r') as stream:
+        params = yaml.safe_load(stream)
+
+    env = Environment(assets_root='assets/', objects_set=args.object_set)
+
+    policy = PushGrasping(params)
+    policy.load(fcn_model=args.fcn_model, reg_model=args.reg_model)
+
+    rng = np.random.RandomState()
+    rng.seed(args.seed)
+
+    # Get the objects to generate the challenging scenes
+    obj_ids = []
+    results = []
+    for obj_file in os.listdir(os.path.join('assets/objects', args.object_set)):
+        if not obj_file.endswith('.obj'):
+            continue
+        obj_ids.append(int(obj_file.split('.')[0]))
+    obj_ids.sort()
+
+    for i in range(len(obj_ids)):
+        eval_data = []
+        sr_n = 0
+        sr_1 = 0
+        attempts = 0
+        objects_removed = 0
+        for j in range(2, 8):
+            print('ID:', obj_ids[i])
+            episode_seed = rng.randint(0, pow(2, 32) - 1)
+            print('Episode:{}, seed:{}'.format(i, episode_seed))
+            env.set_challenging(obj_id=obj_ids[i], instances=j)
+            episode_data = run_episode(policy, env, episode_seed, train=False)
+            eval_data.append(episode_data)
+
+            sr_1 += episode_data['sr-1']
+            sr_n += episode_data['sr-n']
+            attempts += episode_data['attempts']
+            objects_removed += (episode_data['objects_removed'] + 1) / float(episode_data['objects_in_scene'])
+        print('SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(sr_1 / args.n_scenes,
+                                                              sr_n / attempts,
+                                                              objects_removed / len(eval_data)))
 
 
 def parse_args():

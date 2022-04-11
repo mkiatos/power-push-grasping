@@ -76,5 +76,5 @@ python test.py --fcn_model path-to-fcn-model --reg_model path-to-reg-model --obj
 
 To evaluate on challenging scenes.
 ```commandline
-
+python test.py --fcn_model path-to-fcn-model --reg_model path-to-reg-model --object_set 'challenging'
 ```

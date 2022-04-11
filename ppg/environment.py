@@ -470,6 +470,7 @@ class Environment:
         self.pxl_size = 0.005
         self.bounds = np.array([[-0.25, 0.25], [-0.25, 0.25], [0.01, 0.3]])  # workspace limits
         self.assets_root = assets_root
+        self.objects_set = objects_set
         self.workspace_pos = np.array([0.0, 0.0, 0.0])
         self.nr_objects = [5, 8]
         self.disp = disp
@@ -617,6 +618,43 @@ class Environment:
 
             self.objects.append(self.add_single_object(obj_paths[i], pos, quat, size))
 
+    def add_challenging(self, obj_id, instances):
+
+        def get_xyz(pxl, obj_size):
+            x = -(self.pxl_size * pxl[0] - self.bounds[0, 1])
+            y = self.pxl_size * pxl[1] - self.bounds[1, 1]
+            z = obj_size[2]
+            return np.array([x, y, z])
+
+        pixels = [[(50, 50), (70, 50), ],
+                  [(50, 50), (70, 50), (30, 50)],
+                  [(50, 50), (70, 50), (50, 30), (70, 30)],
+                  [(30, 50), (50, 50), (70, 50), (40, 30), (60, 30)],
+                  [(30, 50), (50, 50), (70, 50), (30, 30), (50, 30), (70, 30)],
+                  [(30, 50), (50, 50), (70, 50), (20, 30), (40, 30), (60, 30), (80, 30)]]
+
+        obj_path = os.path.join(self.assets_root, 'objects/challenging', str(obj_id)+'.obj')
+        print(obj_path)
+
+        for i in range(instances):
+            obj = Object()
+            base_position, base_orientation = self.workspace2world(np.array([1.0, 1.0, 0.0]), Quaternion())
+            body_id = pybullet_utils.load_obj(obj_path=obj_path, scaling=1.0, position=base_position,
+                                              orientation=base_orientation.as_vector("xyzw"))
+            obj.body_id = body_id
+            size = (np.array(p.getAABB(body_id)[1]) - np.array(p.getAABB(body_id)[0])) / 2.0
+            p.removeBody(body_id)
+
+            pix = pixels[instances - 2][i]
+            pos = get_xyz(pix, size)
+            quat = Quaternion()
+
+            self.objects.append(self.add_single_object(obj_path, pos, quat, size))
+
+    def set_challenging(self, obj_id, instances):
+        self.obj_id = obj_id
+        self.instances = instances
+
     def reset(self):
         # Reset simulation.
         p.resetSimulation()
@@ -640,8 +678,17 @@ class Environment:
 
         # Generate a scene with randomly placed objects.
         self.objects = []
-        self.add_objects()
+        # self.add_objects()
+        if self.objects_set == 'challenging':
+            self.add_challenging(self.obj_id, self.instances)
+        else:
+            self.add_objects()
         self.simulation.objects = self.objects
+
+        t = 0
+        while t < 100:
+            self.simulation.step()
+            t += 1
 
         # Remove flat objects.
         self.remove_flats()
