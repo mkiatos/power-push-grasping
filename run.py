@@ -6,7 +6,6 @@ import cv2
 import open3d as o3d
 
 from ppg.agent import PushGrasping
-from ppg.utils import utils
 from ppg.utils.orientation import Quaternion
 
 
@@ -65,7 +64,10 @@ def get_fused_heightmap(obs, camera_config, bounds, pix_size):
 
 
 class RealCamera:
-    def __init__(self):
+    def __init__(self,
+                 intrinsics,
+                 pose
+                 ): #ToDo: read from a directory
         (fx, fy, cx, cy) = pickle.load(open('scene_2/intrinsics', 'rb'))
         self.intrinsics = np.array([[fx, 0, cx],
                                     [0, fy, cy],
@@ -134,6 +136,57 @@ class PushGraspingReal(PushGrasping):
         # Transform angle
         theta = 0
         return 0
+
+
+class PushGraspingClient:
+    def __init__(self, fcn_model, reg_model):
+        with open('../yaml/bhand.yml', 'r') as stream:
+            params = yaml.safe_load(stream)
+        self.policy = PushGraspingReal(params)
+        self.policy.load(fcn_model=fcn_model, reg_model=reg_model)
+
+        rospy.wait_for_service('')
+
+    def get_obs(self):
+        return {'rgb': [], 'color': []}
+
+    def set_action(self, action, conf_id=0):
+        pass
+
+    def execute_action(self):
+        # Get observation
+        obs = self.get_obs()
+        state = self.policy.state_representation(obs)
+
+        # Estimate action
+        action = self.policy.predict(state)
+        env_action = self.policy.action(action)
+        # real_action = self.policy.transform_wrt_real_robot(env_action)
+
+        # Step 1: Go to the correct parking position, depending on the estimated angle
+        if env_action['angle'] > 0:
+            parking_id = 2
+        else:
+            parking_id = 3
+        self.set_action(conf_id=parking_id)
+
+        # Step 2: Go to pre_grasp position
+        pre_grasp = []
+        self.set_action(pre_grasp)
+
+        # Step 3: Go to grasping position and close the fingers
+        grasp = []
+        self.set_action(grasp)
+
+        # Step 4: Move up
+        final_pos = []
+        self.set_action(final_pos)
+
+        # Step 5: Go to parking position and open the fingers
+        self.set_action(conf_id=parking_id)
+
+        # Step 6: Go to capture position
+        self.set_action(conf_id=1)
 
 
 def test_real_exp(fcn_model, reg_model):
