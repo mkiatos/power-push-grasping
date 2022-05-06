@@ -813,7 +813,7 @@ class Environment:
             rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
             angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
 
-            if obj_pos[2] < 0 or np.abs(angle_z) > 0.1:
+            if obj_pos[2] < 0 or np.abs(angle_z) > 0.2:
                 p.removeBody(obj.body_id)
                 continue
             non_flats.append(obj)
