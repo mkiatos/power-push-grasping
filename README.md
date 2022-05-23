@@ -5,11 +5,14 @@ wrap around the target object to perform a stable power grasp, using a single pr
 
 This repository provides PyTorch code for training and testing PPG policies in simulation with a Barrett Hand. This is the reference implementation for the paper: 'Learning Push-Grasping in Dense Clutter'.
 
-## Citing
-If you find this code useful in your work, please consider citing:
-```shell
+[//]: # (## Citing)
 
-```
+[//]: # (If you find this code useful in your work, please consider citing:)
+
+[//]: # (```shell)
+
+[//]: # ()
+[//]: # (```)
 
 ## Installation
 ```shell
@@ -27,11 +30,6 @@ pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f ht
 ```
 
 ## A Quick-Start: Demo in Simulation
-
-[//]: # (<img src="images/challenging2.gif" height=200px align="right" />)
-
-[//]: # (<img src="images/sim2.gif" height=200px align="right" />)
-
 <p align="center">
   <img src="images/challenging2.gif" height="200" />
   <img src="images/sim2.gif" height="200" /> 
