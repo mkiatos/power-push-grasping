@@ -27,8 +27,8 @@ pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f ht
 ```
 
 ## A Quick-Start: Demo in Simulation
-<img src="images/challenging.gif" height=220px align="right" />
-<img src="images/sim1.gif" height=220px align="right" />
+<img src="images/challenging.gif" height=200px align="right" />
+<img src="images/sim1.gif" height=200px align="right" />
 
 This demo runs our pre-trained model with a Barrett Hand in simulation on an environment. The objective is
 to perform a stable graspr. The video on the left visualizes the PPG policy on seen objects while the video on the right
