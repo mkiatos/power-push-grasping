@@ -27,8 +27,17 @@ pip install torch==1.9.0+cu111 torchvision==0.10.0+cu111 torchaudio==0.9.0 -f ht
 ```
 
 ## A Quick-Start: Demo in Simulation
-<img src="images/challenging.gif" height=200px align="right" />
-<img src="images/sim1.gif" height=200px align="right" />
+
+[//]: # (<img src="images/challenging2.gif" height=200px align="right" />)
+
+[//]: # (<img src="images/sim2.gif" height=200px align="right" />)
+
+<p align="center">
+  <img src="images/challenging2.gif" height="200" />
+  <img src="images/sim2.gif" height="200" /> 
+  <img src="images/sim1.gif" height="200" /> 
+</p>
+
 
 This demo runs our pre-trained model with a Barrett Hand in simulation on an environment. The objective is
 to perform a stable graspr. The video on the left visualizes the PPG policy on seen objects while the video on the right
@@ -43,7 +52,7 @@ cd ..
 
 Then, run the following command.
 ```commandline
-python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_model.pt' --n_scenes 10
+python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_model.pt' --seed 6 --n_scenes 10
 ```
 
 
