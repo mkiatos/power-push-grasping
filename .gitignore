@@ -13,6 +13,8 @@ venv/
 
 *.urdf
 
+*.pt
+
 scripts/
 models/
 assets/
