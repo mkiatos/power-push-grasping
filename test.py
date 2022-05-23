@@ -40,14 +40,14 @@ def run_episode(policy, env, episode_seed, max_steps=15, train=True):
         # Step environment.
         next_obs, grasp_info = env.step(env_action)
 
+        episode_data['attempts'] += 1
+
         if grasp_info['collision']:
             episode_data['collisions'] += 1
-            continue
 
         if grasp_info['stable'] and i == 0:
             episode_data['sr-1'] += 1
 
-        episode_data['attempts'] += 1
         if grasp_info['stable']:
             episode_data['sr-n'] += 1
             episode_data['objects_removed'] += 1
@@ -92,6 +92,12 @@ def eval_agent(args):
         sr_n += episode_data['sr-n']
         attempts += episode_data['attempts']
         objects_removed += (episode_data['objects_removed'] + 1) / float(episode_data['objects_in_scene'])
+
+        if i % 5 == 0:
+            print('Episode: {}, SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(i, sr_1 / (i+1),
+                                                                               sr_n / attempts,
+                                                                               objects_removed / len(eval_data)))
+
     print('SR-1:{}, SR-N: {}, Scene Clearance: {}'.format(sr_1 / args.n_scenes,
                                                           sr_n / attempts,
                                                           objects_removed / len(eval_data)))
