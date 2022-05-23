@@ -281,6 +281,91 @@ class PushGrasping(Policy):
 
         return action
 
+    def random_grasps(self, state, sample_limits=[0.02, 0.03]):
+        obj_ids = np.argwhere(state > self.z)
+
+        # Sample initial position.
+        valid_pxl_map = np.zeros(state.shape)
+        for x in range(state.shape[0]):
+            for y in range(state.shape[1]):
+                dists = np.linalg.norm(np.array([y, x]) - obj_ids, axis=1)
+                if sample_limits[0] / self.pxl_size < np.min(dists) < sample_limits[1] / self.pxl_size:
+                    valid_pxl_map[y, x] = 255
+
+        # fig, ax = plt.subplots(1, 2)
+        # ax[0].imshow(state)
+        # ax[1].imshow(valid_pxl_map)
+        # plt.show()
+
+        valid_pxls = np.argwhere(valid_pxl_map == 255)
+        valid_ids = np.arange(0, valid_pxls.shape[0])
+
+        pxl = valid_pxls[self.rng.choice(valid_ids, 1)[0]]
+        p1 = np.array([pxl[1], pxl[0]])
+
+        objects_mask = np.zeros(state.shape)
+        objects_mask[state > self.z] = 255
+        _, thresh = cv2.threshold(objects_mask.astype(np.uint8), 127, 255, 0)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+        p2 = []
+        min_dist = 1000
+        for cnt in contours:
+            for pnt in cnt:
+                dist = np.linalg.norm(p1 - np.array([pnt[0, 0], pnt[0, 1]]))
+                if dist < min_dist:
+                    min_dist = dist
+                    p2 = np.array([pnt[0, 0], pnt[0, 1]])
+
+
+        # while True:
+        #     pxl = valid_pxls[self.rng.choice(valid_ids, 1)[0]]
+        #     p1 = np.array([pxl[1], pxl[0]])
+        #
+        #     # Sample pushing direction. Push directions point always towards the objects.
+        #     # Keep only contour points that are around the sample pixel position.
+        #     pushing_area = self.push_distance / self.pxl_size
+        #     points = []
+        #     for cnt in contours:
+        #         for pnt in cnt:
+        #             if (p1[0] - pushing_area < pnt[0, 0] < p1[0] + pushing_area) and \
+        #                     (p1[1] - pushing_area < pnt[0, 1] < p1[1] + pushing_area):
+        #                 points.append(pnt[0])
+        #     if len(points) > 0:
+        #         break
+        #
+        # ids = np.arange(len(points))
+        # random_id = self.rng.choice(ids, 1)[0]
+        # p2 = points[random_id]
+
+        push_dir = p2 - p1
+        theta = -np.arctan2(push_dir[1], push_dir[0])
+        step_angle = 2 * np.pi / self.rotations
+        discrete_theta = round(theta / step_angle) * step_angle
+
+        print(theta, discrete_theta)
+
+        p2[0] = p1[0] + 20 * np.cos(discrete_theta)
+        p2[1] = p1[1] - 20 * np.sin(discrete_theta)
+
+        # plt.imshow(state)
+        # plt.plot(p1[0], p1[1], 'o', 2)
+        # plt.plot(p2[0], p2[1], 'x', 2)
+        # plt.arrow(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1], width=1)
+        # plt.show()
+
+        # Sample aperture uniformly
+        aperture = self.rng.uniform(self.aperture_limits[0], self.aperture_limits[1])
+        aperture = 0.85
+
+        action = np.zeros((4,))
+        action[0] = p1[0]
+        action[1] = p1[1]
+        action[2] = discrete_theta
+        action[3] = aperture
+
+        return action
+
     def explore(self, state):
         explore_prob = max(0.8 * np.power(0.9998, self.learn_step_counter), 0.1)
 
