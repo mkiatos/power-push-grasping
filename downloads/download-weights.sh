@@ -1,3 +1,2 @@
-cd "$( dirname "${BASH_SOURCE[0]}" )"
-wget https://drive.google.com/drive/folders/ppg/downloads/reg_model.pth
-wget https://drive.google.com/drive/folders/1shrAsrC0QPhlCpJCbak_l5p39X_f_g7x/fcn_model.pth
+gdown 'https://drive.google.com/uc?export=dowload&id=1Oj75FFah9GGOI6sCuTkhs4qejb10VVBG'
+gdown 'https://drive.google.com/uc?export=dowload&id=1af7XbbPAK8S9bUYOFEswbVSdwmrZqDp7'
