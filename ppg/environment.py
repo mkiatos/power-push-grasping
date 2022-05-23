@@ -6,7 +6,7 @@ import time
 import cv2
 import matplotlib.pyplot as plt
 
-from ppg.utils.orientation import Quaternion, Affine3, angle_axis2rot, rot_y, rot_z
+from ppg.utils.orientation import Quaternion, Affine3, angle_axis2rot, rot_y, rot_z, rot_x
 from ppg.utils import robotics, pybullet_utils, urdf_editor
 from ppg import cameras
 import ppg.utils.utils as utils
@@ -105,7 +105,7 @@ class FloatingGripper:
 
         # If there is no urdf file, generate the mounted-gripper urdf.
         self.mount_urdf = os.path.join('assets', MOUNT_URDF_PATH)
-        mounted_urdf_name = "assets/mounted_" + robot_hand_urdf.split('/')[-1].split('.')[0] + ".urdf"
+        mounted_urdf_name = "../assets/mounted_" + robot_hand_urdf.split('/')[-1].split('.')[0] + ".urdf"
         if not os.path.exists(mounted_urdf_name):
             self.generate_mounted_urdf(robot_hand_urdf, pos_offset, orn_offset)
 
@@ -599,12 +599,21 @@ class Environment:
             free = np.zeros(state.shape, dtype=np.uint8)
             free[state == 0] = 1
             free[0, :], free[:, 0], free[-1, :], free[:, -1] = 0, 0, 0, 0
+            free[0:10] = 0
+            free[90:100] = 0
+            free[:, 0:10] = 0
+            free[:, 90:100] = 0
             free = cv2.erode(free, np.ones((erode_size, erode_size), np.uint8))
+            # plt.imshow(free)
+            # plt.show()
 
             if np.sum(free) == 0:
                 return
             pixx = utils.sample_distribution(np.float32(free), self.rng)
             pix = np.array([pixx[1], pixx[0]])
+
+            if i == 0:
+                pix = np.array([50, 50])
 
             # plt.imshow(free)
             # plt.plot(pix[0], pix[1], 'ro')
@@ -694,7 +703,7 @@ class Environment:
         self.remove_flats()
 
         # Pack objects.
-        self.hug(force_magnitude=1)
+        self.hug(force_magnitude=2)
 
         self.remove_flats()
         while self.is_static():
@@ -725,6 +734,8 @@ class Environment:
             # Push the hand forward.
             rot = action['quat'].rotation_matrix()
             grasp_pos = action['pos'] + rot[0:3, 2] * action['push_distance']
+
+            # if grasping only, comment out
             self.bhand.move(grasp_pos, action['quat'], duration=2)
 
             # Compute distances of each object from other objects after pushing.
@@ -813,7 +824,7 @@ class Environment:
             rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
             angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
 
-            if obj_pos[2] < 0 or np.abs(angle_z) > 0.2:
+            if obj_pos[2] < 0 or np.abs(angle_z) > 0.3:
                 p.removeBody(obj.body_id)
                 continue
             non_flats.append(obj)
@@ -865,30 +876,3 @@ class Environment:
             if norm_1 > 0.001 or norm_2 > 0.1:
                 return True
         return False
-
-
-
- # def get_flat_objects(self):
- #            flats = 0
- #            non_flats = 0
- #            for obj in self.objects:
- #                obj_pos, obj_quat = p.getBasePositionAndOrientation(obj.body_id)
- #
- #                rot_mat = Quaternion(x=obj_quat[0], y=obj_quat[1], z=obj_quat[2], w=obj_quat[3]).rotation_matrix()
- #                angle_z = np.arccos(np.dot(np.array([0, 0, 1]), rot_mat[0:3, 2]))
- #
- #                if obj_pos[2] < 0:
- #                    continue
- #
- #                if np.abs(angle_z) > 0.1:
- #                    flats += 1
- #                else:
- #                    non_flats += 1
- #
- #            return flats, non_flats
- #        prev_flats, prev_non_flats = get_flat_objects()
-
- # print('Non_flats:', prev_non_flats, non_flats)
-                # if non_flats < prev_non_flats or prev_flats < flats:
-                #     label = False
-                # else:
