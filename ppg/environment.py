@@ -515,7 +515,7 @@ class Environment:
 
         self.simulation = Simulation(self.objects)
 
-        self.singulation_condition = True
+        self.singulation_condition = False
 
     def seed(self, seed):
         self.rng.seed(seed)
