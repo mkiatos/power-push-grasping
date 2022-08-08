@@ -17,7 +17,7 @@ venv/
 
 scripts/
 models/
-assets/
+#assets/
 logs/
 logs_tmp/
 baselines/
