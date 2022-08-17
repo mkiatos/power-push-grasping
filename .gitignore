@@ -11,7 +11,7 @@ venv/
 # pkl files
 *.pkl
 
-*.urdf
+#*.urdf
 
 *.pt
 
