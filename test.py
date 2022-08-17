@@ -157,7 +157,7 @@ def parse_args():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('--fcn_model', default='', type=str, help='')
     parser.add_argument('--reg_model', default='', type=str, help='')
-    parser.add_argument('--seed', default=0, type=int, help='')
+    parser.add_argument('--seed', default=6, type=int, help='')
     parser.add_argument('--n_scenes', default=100, type=int, help='')
     parser.add_argument('--object_set', default='seen', type=str, help='')
     return parser.parse_args()

@@ -50,7 +50,7 @@ cd ..
 
 Then, run the following command.
 ```commandline
-python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_model.pt' --seed 6 --n_scenes 10
+python test.py --fcn_model 'downloads/fcn_model.pt' --reg_model 'downloads/reg_model.pt' --n_scenes 10
 ```
 
 
